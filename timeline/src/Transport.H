@@ -54,6 +54,9 @@ private:
 
     void update_record_state ( void );
 
+	// Print JACK transport position for debugging purposes.
+	void printJackTransportPos( const jack_position_t* pPos );
+
 public:
 
     Transport ( int X, int Y, int W, int H, const char *L=0 );
