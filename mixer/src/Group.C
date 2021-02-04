@@ -56,9 +56,20 @@ Group::~Group ( )
 {
     DMESSAGE( "Destroying group" );
 
+    mixer->remove_group(this);
+
+    for ( std::list<Mixer_Strip*>::iterator i = strips.begin();
+          i != strips.end();
+          i++ )
+    {
+	/* avoid a use after free during project close when the group
+	 * may be destroyed before its member strips are */
+	(*i)->clear_group();
+    }
+
     if ( _name )
         free( _name );
-
+    
     deactivate();
 }
 
@@ -101,12 +112,16 @@ Group::set ( Log_Entry &e )
 void
 Group::latency ( jack_latency_callback_mode_t mode )
 {
-    for ( std::list<Mixer_Strip*>::iterator i = strips.begin();
-          i != strips.end();
-          i++ )
+    if ( trylock() )
     {
-        if ( (*i)->chain() )            
-            (*i)->chain()->set_latency(mode == JackCaptureLatency ? JACK::Port::Input : JACK::Port::Output );
+	for ( std::list<Mixer_Strip*>::iterator i = strips.begin();
+	      i != strips.end();
+	      i++ )
+	{
+	    if ( (*i)->chain() )            
+		(*i)->chain()->set_latency(mode == JackCaptureLatency ? JACK::Port::Input : JACK::Port::Output );
+	}
+	unlock();
     }
 }
 
@@ -208,8 +223,9 @@ Group::process ( nframes_t nframes )
 void
 Group::recal_load_coef ( void )
 {
-    _load_coef = 1.0f / ( nframes() / (float)sample_rate() * 1000000.0 );
+    _load_coef = 1.0f / ( nframes() / (float)sample_rate() * 1000000.0f );
 }
+
 int
 Group::sample_rate_changed ( nframes_t srate )
 {
@@ -261,7 +277,7 @@ Group::name ( const char *n )
     if ( !active() )
     {
         Client::init( ename );
-        Module::set_sample_rate( sample_rate() );
+        Module::sample_rate( sample_rate() );
     }
     else
     {
@@ -273,6 +289,7 @@ void
 Group::add ( Mixer_Strip *o )
 {
     lock();
+
     if ( ! active() )
     {
         /* to call init */
@@ -280,10 +297,12 @@ Group::add ( Mixer_Strip *o )
         name(n);
         free(n);
     }
+
     if ( o->chain() )
         o->chain()->thaw_ports();
 
     strips.push_back(o);
+
     unlock();
 }
 
@@ -291,13 +310,15 @@ void
 Group::remove ( Mixer_Strip *o )
 {
     lock();
+    
     strips.remove(o);
+    
     if ( o->chain() )
         o->chain()->freeze_ports();
+
     if ( strips.size() == 0 && active() )
-    {
         Client::close();
-    }
+    
     unlock();
 }
 

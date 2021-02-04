@@ -73,6 +73,7 @@ Mixer_Strip::Mixer_Strip( const char *strip_name ) : Fl_Group( 0, 0, 120, 600 )
 
     init();
 
+    /* create single member group */
     _group = new Group(strip_name, true);
 
     _group->add( this );
@@ -105,14 +106,30 @@ Mixer_Strip::~Mixer_Strip ( )
 //    _chain->engine()->lock();
 
     log_destroy();
-
+    
     mixer->remove( this );
 
     /* make sure this gets destroyed before the chain */
     fader_tab->clear();
 
-    delete _chain;
-    _chain = NULL;
+    if ( _group )
+    {
+	_group->remove( this );
+    }
+    
+    if ( _chain )
+    {
+	delete _chain;
+	_chain = NULL;
+    }
+
+    if ( _group )
+    {
+	if ( 0 == _group->children() )
+	    delete _group;
+	
+	_group = NULL;
+    }
 }
 
 
@@ -347,6 +364,7 @@ void Mixer_Strip::cb_handle(Fl_Widget* o, void* v) {
 void
 Mixer_Strip::group ( Group *g )
 {
+    /* FIXME: what is the intention here? */
     if ( !g && _group && _group->single() )
         return;
 
@@ -544,16 +562,35 @@ Mixer_Strip::init ( )
             o->box(FL_FLAT_BOX);
             o->tooltip( "Drag and drop to move strip" );
         }
+	
+	{ Fl_Progress* o = dsp_load_progress = new Fl_Progress(61, 183, 45, 14, "group dsp");
+	    o->box(FL_BORDER_BOX);
+	    o->type(FL_HORIZONTAL);
+	    /* o->labelsize( 9 ); */
+	    o->minimum( 0 );
+//                o->maximum( 0.25f );
+	    o->maximum( 1 );
+	    /* o->color(fl_rgb_color( 10,10,10 ) ); */
+	    o->color2(FL_CYAN);
+	    
+	    o->color(fl_contrast(FL_DARK1,FL_FOREGROUND_COLOR));
+	    o->labelcolor(FL_FOREGROUND_COLOR);
+	    /* o->labeltype(FL_NORMAL_LABEL); */
+	    o->labeltype(FL_NORMAL_LABEL);
+	    o->labelfont( FL_COURIER_BOLD );
+	    o->labelsize( 12 );
+	}
 
         { Fl_Pack *o = new Fl_Pack( 2, 2, 114, 100 );
             o->type( Fl_Pack::VERTICAL );
-            o->spacing( 2 );
+	    o->spacing(2);
             {
                 Fl_Sometimes_Input *o = new Fl_Sometimes_Input( 2, 2, 144, 15 );
                 name_field = o;
 
-                o->up_box( FL_NO_BOX );
+                o->up_box( FL_FLAT_BOX );
                 o->box( FL_FLAT_BOX );
+		o->color( FL_BACKGROUND_COLOR );
                 o->selection_color( FL_BLACK );
                 o->labeltype( FL_NO_LABEL );
                 o->labelcolor( FL_GRAY0 );
@@ -564,7 +601,7 @@ Mixer_Strip::init ( )
             }
             { Fl_Scalepack *o = new Fl_Scalepack( 7, 143, 110, 18 );
                 o->type( Fl_Pack::HORIZONTAL );
-              
+		o->spacing(2);
                 { Fl_Flip_Button* o = width_button = new Fl_Flip_Button(61, 183, 45, 22, "[]/[-]");
                     o->type(1);
                     o->tooltip( "Switch between wide and narrow views" );
@@ -586,16 +623,6 @@ Mixer_Strip::init ( )
 
                 o->end();
             } // Fl_Group* o
-            { Fl_Progress* o = dsp_load_progress = new Fl_Progress(61, 183, 45, 14, "group dsp");
-                o->box(FL_BORDER_BOX);
-                o->type(FL_HORIZONTAL);
-                o->labelsize( 9 );
-                o->minimum( 0 );
-//                o->maximum( 0.25f );
-                o->maximum( 1 );
-               o->color(fl_rgb_color( 10,10,10 ) );
-                o->color2(FL_CYAN);
-            }
             { Fl_Choice* o = group_choice = new Fl_Choice(61, 183, 45, 22);
                 o->tooltip( "Create or assign group" );
                 o->labeltype(FL_NO_LABEL);
@@ -607,6 +634,7 @@ Mixer_Strip::init ( )
             }
             { Fl_Scalepack *o = new Fl_Scalepack( 0,0, 45, 22 );
                 o->type( FL_HORIZONTAL );
+		o->spacing(2);
                 { Fl_Flip_Button* o = tab_button = new Fl_Flip_Button(61, 183, 45, 22, "Fadr/Signl");
                     o->tooltip( "Switch between fader and signal views" );
                     o->type(1);
@@ -647,7 +675,7 @@ Mixer_Strip::init ( )
                 { Fl_Scalepack* o = new Fl_Scalepack(2, 135, 105, 311 );
                     // o->box( FL_BORDER_BOX );
 //                        o->color( FL_RED );
-                    o->spacing( 20 );
+                    o->spacing( 0 );
                     o->type( Fl_Scalepack::HORIZONTAL );
                     { Controller_Module *o = gain_controller = new Controller_Module( true );
                         o->horizontal(false);
@@ -790,9 +818,8 @@ Mixer_Strip::export_strip ( const char *filename )
 {
     MESSAGE( "Exporting chain state" );
     Loggable::snapshot_callback( &Mixer_Strip::snapshot, this );
-    Loggable::snapshot( filename );
-    return true;
-}
+    return Loggable::snapshot( filename );
+    }
 
 bool
 Mixer_Strip::import_strip ( const char *filename )
@@ -865,9 +892,12 @@ Mixer_Strip::menu_cb ( const Fl_Menu_ *m )
         free( suggested_name );
 
         if ( s )
-            export_strip( s );
-
-        fl_message( "Strip exported." );
+	{
+	    if ( export_strip( s ) )
+		fl_message( "Strip exported." );
+	    else
+		fl_alert("Failed to export strip");
+	}
     }
     else if ( ! strcmp( picked, "/Remove" ) )
     {
@@ -912,6 +942,9 @@ Mixer_Strip::menu_cb ( Fl_Widget *w, void *v )
 void
 Mixer_Strip::auto_input ( const char *s )
 {
+    /* break old connections */
+    disconnect_auto_inputs(s);
+    
     if ( _auto_input )
         free( _auto_input );
     
@@ -920,6 +953,7 @@ Mixer_Strip::auto_input ( const char *s )
     if ( s )
         _auto_input = strdup( s );
 
+    /* make new connections */
     mixer->auto_connect();
 }
 
@@ -952,13 +986,13 @@ static bool matches_pattern ( const char *pattern, Module::Port *p )
             return false;
         }
 
+	/* DMESSAGE( "Auto-connect comparing pattern: %s, to port %s", pattern, */
+	/* 	  p->jack_port()->name() ); */
+
         /* group matches... try port group */
         if ( ! strcmp( port_group, "mains" ) )
-        { 
-            if ( index( p->jack_port()->name(), '/' ) )
-                return false;
-            else
-                return true;
+        {	    
+            return !index( p->jack_port()->name(), '/' );
         }
         else
         {
@@ -968,7 +1002,7 @@ static bool matches_pattern ( const char *pattern, Module::Port *p )
             if ( n )
             {
 //                *n = 0;
-                if ( ! strncmp( port_group, pn, ( n - 1 ) - pn ) )
+                if ( ! strncmp( port_group, pn, n - pn ) )
                     return true;
                 else
                     return false;
@@ -996,6 +1030,42 @@ Mixer_Strip::has_group_affinity ( void ) const
     return _auto_input && strncmp( _auto_input, "*/", 2 );
 }
 
+void
+Mixer_Strip::disconnect_auto_inputs ( const char *exclude_pattern )
+{
+    if ( chain() )
+    {
+	JACK_Module *m = (JACK_Module*)chain()->module(0);
+	
+	if ( m )
+	{
+	    for ( unsigned int i = 0; i < m->aux_audio_input.size(); ++i )
+	    {
+		Module::Port *p1 = &m->aux_audio_input[i];
+
+		if ( _auto_input && exclude_pattern )
+		{
+		    /* avoid disconnecting a port that we'll immediately be reconnecting */
+		    for ( unsigned int j = 0; j < p1->nconnected(); ++j )
+		    {
+			Module::Port *p2 = p1->connected_port( j );
+
+			if ( !matches_pattern( exclude_pattern, p2 ) )
+			{
+			    p1->disconnect( p2 );
+			    j--; /* keep our place in the iteration */
+			}
+		    }
+		}
+		else
+		{
+		    m->aux_audio_input[i].disconnect();
+		}
+	    }
+	}
+    }
+}
+
 bool
 Mixer_Strip::maybe_auto_connect_output ( Module::Port *p )
 {
@@ -1008,15 +1078,19 @@ Mixer_Strip::maybe_auto_connect_output ( Module::Port *p )
 
     if ( ! _auto_input )
     {
-        /* break any previous connection between this port and this module */
-        p->disconnect_from_strip(this);        
+	/* not accepting auto inputs, so ensure all previous auto
+	   input connection are broken and ignore this port. */
+        p->disconnect_from_strip(this);
+	return false;
     }
     
-    if ( _auto_input && matches_pattern( _auto_input, p ) )
+    if ( _auto_input &&
+	 matches_pattern( _auto_input, p ) )
     {
-        /* break any prior auto-connection */
-        p->disconnect();
-        
+	/* got a match, add this to list of accepted connections */
+	
+
+	
         // FIXME: Find a better way to get the port index.
         const char* jack_name = p->jack_port()->jack_name();
        
@@ -1038,6 +1112,9 @@ Mixer_Strip::maybe_auto_connect_output ( Module::Port *p )
 //            DMESSAGE( "No port to connect to at this index");
             return false;
         }
+
+	if ( ! m->aux_audio_input[n].connected_to( p ) )
+	    m->aux_audio_input[n].connect_to( p );
 
         m->aux_audio_input[n].connect_to( p );
         
@@ -1121,6 +1198,9 @@ Mixer_Strip::handle ( int m )
 {
     static int _button = 0;
 
+    if (!_chain )
+	return 0;
+    
     Logger log( this );
     
     static Fl_Widget *dragging = NULL;
@@ -1201,16 +1281,40 @@ Mixer_Strip::handle ( int m )
 }
 
 void
-Mixer_Strip::send_feedback ( void )
+Mixer_Strip::send_feedback ( bool force )
 {
     if ( _chain )
-        _chain->send_feedback();
+        _chain->send_feedback(force);
+}
+
+void
+Mixer_Strip::schedule_feedback ( void )
+{
+    if ( _chain )
+        _chain->schedule_feedback();
+}
+
+/* called to inform the strip its number has changed. */
+void
+Mixer_Strip::number ( int n )
+{
+    if ( _number != n )
+    {
+	_number = n;
+	char *s =NULL;
+	asprintf( &s,"%i", n+1 );
+	dsp_load_progress->label(s);
+	/* color code groups of eight */
+	dsp_load_progress->color( (n / 8) % 2 == 0 ? FL_BACKGROUND_COLOR : FL_BLACK );	
+	/* dsp_load_progress->color( fl_color_average( (Fl_Color)n / 8, FL_BACKGROUND_COLOR, 0.66f )); */
+	dsp_load_progress->labelcolor(fl_contrast( FL_BACKGROUND_COLOR, dsp_load_progress->color() ));
+    }
 }
 
 int
 Mixer_Strip::number ( void ) const
 {
-    return mixer->find_strip( this );
+    return _number;
 }
 
 /************/

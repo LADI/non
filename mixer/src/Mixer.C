@@ -49,7 +49,8 @@
 
 #include "Controller_Module.H"
 
-const double FEEDBACK_UPDATE_FREQ = 1.0f;
+/* const double FEEDBACK_UPDATE_FREQ = 1.0f; */
+const double FEEDBACK_UPDATE_FREQ = 1.0f / 30.0f;
 
 extern char *user_config_dir;
 extern char *instance_name;
@@ -308,7 +309,7 @@ void Mixer::cb_menu(Fl_Widget* o) {
     }
     else if ( !strcmp( picked, "&Remote Control/Send State" ) )
     {
-        send_feedback();
+	send_feedback(true);
     }
     else if ( ! strcmp( picked, "&Remote Control/Clear All Mappings" ) )
     {
@@ -354,7 +355,7 @@ void Mixer::cb_menu(Fl_Widget* o) {
     {
         fl_theme_chooser();
     }
-    else if ( ! strcmp( picked, "&Mixer/Swap &Fader//Signal View" ) )
+    else if ( ! strcmp( picked, "&Mixer/Toggle &Fader View" ) )
     {
         command_toggle_fader_view();
     }
@@ -416,7 +417,7 @@ Mixer::update_cb ( void )
 {
     Fl::repeat_timeout( _update_interval, &Mixer::update_cb, this );
 
-    if ( active_r() && visible_r() )
+    /* if ( active_r() && visible_r() ) */
     {
         for ( int i = 0; i < mixer_strips->children(); i++ )
         {
@@ -527,7 +528,7 @@ Mixer::Mixer ( int X, int Y, int W, int H, const char *L ) :
             o->add( "&Mixer/&Import Strip" );
             o->add( "&Mixer/Paste", FL_CTRL + 'v', 0, 0 );
             o->add( "&Mixer/&Spatialization Console", FL_F + 8, 0, 0, FL_MENU_TOGGLE );
-            o->add( "&Mixer/Swap &Fader//Signal View", FL_ALT + 'f', 0, 0, FL_MENU_TOGGLE );
+            o->add( "&Mixer/Toggle &Fader View", FL_ALT + 'f', 0, 0, FL_MENU_TOGGLE );
 //            o->add( "&Mixer/&Signal View", FL_ALT + 's', 0, 0, FL_MENU_TOGGLE );
             o->add( "&Remote Control/Start Learning", FL_F + 9, 0, 0 );
             o->add( "&Remote Control/Stop Learning", FL_F + 10, 0, 0 );
@@ -571,6 +572,7 @@ Mixer::Mixer ( int X, int Y, int W, int H, const char *L ) :
             align( (Fl_Align)(FL_ALIGN_CENTER | FL_ALIGN_INSIDE) );
             o->flow( false );
             o->box( FL_FLAT_BOX );
+	    o->color( fl_darker(FL_BACKGROUND_COLOR ));
             o->type( Fl_Pack::HORIZONTAL );
             o->hspacing( 2 );
             o->vspacing( 2 );
@@ -590,9 +592,8 @@ Mixer::Mixer ( int X, int Y, int W, int H, const char *L ) :
 
    resize( X,Y,W,H );
 
-    update_frequency( 15 );
+    update_frequency( 24 );
 
-    Fl::add_timeout( FEEDBACK_UPDATE_FREQ, send_feedback_cb, this );
 
     update_menu();
 
@@ -621,8 +622,14 @@ Mixer::osc_strip_by_number ( const char *path, const char *types, lo_arg **argv,
     }
 
     char *new_path;
+
+    char *stripname = escape_url( o->name() );
     
-    asprintf( &new_path, "%s/strip/%s/%s", client_name, o->name(), rem );
+    asprintf( &new_path, "%s/strip/%s/%s", client_name, stripname, rem );
+
+    free( stripname );
+    
+    /* DMESSAGE( "Forwarding by-number OSC path: %s === %s", path, new_path ); */
 
     free( rem );
 
@@ -743,6 +750,8 @@ void Mixer::resize ( int X, int Y, int W, int H )
 {
     Fl_Group::resize( X, Y, W, H );
 
+    sm_blinker->resize( X + W - 40, Y + 5, 35, 15 );
+    
     scroll->resize( X, Y + 24, W, H - 24 - 18 );
 
     mixer_strips->resize( X, Y + 24, W, H - (18*2) - 24 );
@@ -757,8 +766,10 @@ void Mixer::add ( Mixer_Strip *ms )
     mixer_strips->add( ms );
 
     ms->size( ms->w(), _strip_height );
-   ms->redraw();
-   ms->take_focus();
+    ms->redraw();
+    ms->take_focus();
+
+    renumber_strips();
 }
 
 int
@@ -775,12 +786,25 @@ Mixer::quit ( void )
     while ( Fl::first_window() ) Fl::first_window()->hide();
 }
 
+void
+Mixer::renumber_strips ( void )
+{
+    for ( int i = mixer_strips->children(); i--; )
+    {
+	Mixer_Strip *o = (Mixer_Strip*)mixer_strips->child(i);
+	
+        o->number( find_strip( o ) );
+    }
+}
+		      
 
 void
 Mixer::insert ( Mixer_Strip *ms, Mixer_Strip *before )
 {
 //    mixer_strips->remove( ms );
     mixer_strips->insert( *ms, before );
+    renumber_strips();
+    schedule_feedback();
 //    scroll->redraw();
 }
 void
@@ -789,6 +813,7 @@ Mixer::insert ( Mixer_Strip *ms, int i )
     Mixer_Strip *before = (Mixer_Strip*)mixer_strips->child( i );
 
     insert( ms, before);
+    renumber_strips();
 }
 
 void
@@ -799,6 +824,7 @@ Mixer::move_left ( Mixer_Strip *ms )
     if ( i > 0 )
         insert( ms, i - 1 );
 
+    renumber_strips();
     /* FIXME: do better */
     mixer_strips->redraw();
 }
@@ -811,6 +837,8 @@ Mixer::move_right ( Mixer_Strip *ms )
     if ( i < mixer_strips->children() - 1 )
         insert( ms, i + 2 );
 
+    renumber_strips();
+    
     /* FIXME: do better */
     mixer_strips->redraw();
 }
@@ -821,10 +849,11 @@ void Mixer::remove ( Mixer_Strip *ms )
 
     mixer_strips->remove( ms );
     
-    ms->group()->remove( ms );
-
     if ( parent() )
         parent()->redraw();
+
+    renumber_strips();
+    schedule_feedback();
 }
 
 
@@ -893,7 +922,7 @@ Mixer::rows ( int ideal_rows )
 
     _rows = ideal_rows;
     
-    if ( _strip_height != sh );
+    if ( _strip_height != sh )
     {
         mixer_strips->redraw();
         scroll->redraw();
@@ -1051,20 +1080,24 @@ Mixer::send_feedback_cb ( void *v )
 {
     Mixer *m = (Mixer*)v;
     
-    m->send_feedback();
+    m->send_feedback(false);
 
+    /* just to it once at the start... */
     Fl::repeat_timeout( FEEDBACK_UPDATE_FREQ, send_feedback_cb, v );
 }
 
-/** unconditionally send feedback to all mapped controls. This is
- * useful for updating the state of an external controller. */
 void
-Mixer::send_feedback ( void )
+Mixer::send_feedback ( bool force )
 {
     for ( int i = 0; i < mixer_strips->children(); i++ )
-    {
-        ((Mixer_Strip*)mixer_strips->child(i))->send_feedback();
-    }
+        ((Mixer_Strip*)mixer_strips->child(i))->send_feedback(force);
+}
+
+void
+Mixer::schedule_feedback ( void )
+{
+    for ( int i = 0; i < mixer_strips->children(); i++ )
+        ((Mixer_Strip*)mixer_strips->child(i))->schedule_feedback();
 }
 
 
@@ -1072,6 +1105,9 @@ Mixer::send_feedback ( void )
 int
 Mixer::handle ( int m )
 {
+    /* if user presses certain keys when project is loading it can cause a crash. Don't respond to input. */
+    if ( Project::is_opening_closing() )
+	return 0;
     
     if ( Fl_Group::handle( m ) )
         return 1;
@@ -1082,7 +1118,9 @@ Mixer::handle ( int m )
         {
             if ( ! Fl::event_inside( this ) )
                 return 0;
-            
+
+	    DMESSAGE( "Got paste into mixer, expecting strip file..." );
+	    
             const char *text = Fl::event_text();
 
             char *file;
@@ -1148,7 +1186,7 @@ Mixer::get_auto_connect_targets ( void )
 void
 Mixer::auto_connect ( void )
 {
-    if ( Project::is_opening() )
+    if ( Project::is_opening_closing() )
         /* it's more efficient to do this once at the end rather than as we go. */
         return;
     
@@ -1176,7 +1214,7 @@ Mixer::auto_connect ( void )
 void
 Mixer::maybe_auto_connect_output ( Module::Port *p )
 {
-    if ( Project::is_opening() )
+    if ( Project::is_opening_closing() )
         /* it's more efficient to do this once at the end rather than as we go. */
         return;
 
@@ -1192,7 +1230,7 @@ Mixer::maybe_auto_connect_output ( Module::Port *p )
                 return;
     }
 
-    /* now do that catch-alls, first one wins! */
+    /* now do the catch-alls, first one wins! */
     for ( int i = 0; i < mixer_strips->children(); i++ )
     {
         Mixer_Strip *s = ((Mixer_Strip*)mixer_strips->child(i));
@@ -1266,6 +1304,9 @@ Mixer::command_load ( const char *path, const char *display_name )
     auto_connect();
 
     mixer->activate();
+
+    /* Fl::remove_timeout( send_feedback_cb, this ); */
+    Fl::add_timeout( FEEDBACK_UPDATE_FREQ, send_feedback_cb, this );
 
     return true;
 }

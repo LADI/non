@@ -1,6 +1,6 @@
 
 /*******************************************************************************/
-/* Copyright (C) 2009 Jonathan Moore Liles                                     */
+/* Copyright (C) 2012 Jonathan Moore Liles                                     */
 /*                                                                             */
 /* This program is free software; you can redistribute it and/or modify it     */
 /* under the terms of the GNU General Public License as published by the       */
@@ -17,63 +17,78 @@
 /* Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
 /*******************************************************************************/
 
-#pragma once
+#include "OSC_Transmit_Thread.H"
 
-#include "Module.H"
-#include <vector>
-#include "JACK/Port.H"
+#include "Timeline.H"
 
-class Fl_Valuator;
-class Fl_Scalepack;
+#include <stdlib.h>
+#include <unistd.h>
 
-class Meter_Indicator_Module : public Module
+#include "debug.h"
+
+#include "OSC/Endpoint.H"
+
+extern Timeline *timeline;
+
+OSC_Transmit_Thread::OSC_Transmit_Thread ( )
 {
-    Fl_Scalepack *dpm_pack;
+    //   _thread.init();
+    _shutdown = false;
+}
 
+OSC_Transmit_Thread::~OSC_Transmit_Thread ( )
+{
+    lock();
+    if ( _shutdown == false )
+    {
+        _shutdown = true;
+        _thread.join();
+    }
+    unlock();
+}   
+        
 
-    bool _pad;
+void
+OSC_Transmit_Thread::start ( )
+{
+    _thread.clone( &OSC_Transmit_Thread::process, this );
+}
 
-    volatile float *control_value;
+void
+OSC_Transmit_Thread::join ( )
+{
+    _thread.join();
+}
 
-    bool _disable_context_menu;
+void
+OSC_Transmit_Thread::process ( void )
+{
+    _thread.name( "OSC_Transmit" );
 
-public:
+    DMESSAGE( "OSC Thread starting" );
 
-    virtual void update ( void );
+    while ( !_shutdown )
+    {
+	
+        if ( trylock() )
+        {
+            timeline->process_osc();
+            unlock();
+        }
 
-    void disable_context_menu ( bool b ) { _disable_context_menu = b; }
+        usleep( 50 * 1000 );
+    }
 
-    void handle_control_changed ( Port *p );
+    DMESSAGE( "OSC Thread stopping." );
+}
 
-    Meter_Indicator_Module ( bool is_default = false );
-    virtual ~Meter_Indicator_Module ( );
+void *
+OSC_Transmit_Thread::process ( void *v )
+{
+    OSC_Transmit_Thread *t = (OSC_Transmit_Thread*)v;
+    
+    t->process();
 
-    bool allows_external_control ( void ) const { return false; }
-    const char *name ( void ) const { return "Meter Indicator"; }
+    return NULL;
+}
 
-    int can_support_inputs ( int ) { return 0; }
-    bool configure_inputs ( int ) { return false; }
-
-    void pad ( bool v ) { _pad = v; }
-
-    static void cb_handle ( Fl_Widget *w, void *v );
-    void cb_handle ( Fl_Widget *w );
-
-    void connect_to ( Port *p );
-
-    LOG_CREATE_FUNC( Meter_Indicator_Module );
-
-    void process ( nframes_t );
-
-protected:
-
-    void get ( Log_Entry &e ) const;
-    void set ( Log_Entry &e );
-
-    virtual void draw ( void );
-    virtual void resize ( int X, int Y, int W, int H );
-    virtual int handle ( int m );
-
-private:
-
-};

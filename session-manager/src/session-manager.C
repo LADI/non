@@ -86,6 +86,7 @@ get_program_icon ( const char *name )
         "/usr/local/share/pixmaps/%s.png",
         "/usr/local/share/pixmaps/%s.xpm",
         "/usr/share/icons/hicolor/32x32/apps/%s.png",
+        "/usr/share/icons/hicolor/128x128/apps/%s.png",
         "/usr/share/pixmaps/%s.png",
         "/usr/share/pixmaps/%s.xpm",
     };
@@ -96,7 +97,7 @@ get_program_icon ( const char *name )
         
         asprintf( &icon_p, tries[i], name );
         
-        Fl_Image *img = Fl_Shared_Image::get( icon_p );
+        Fl_Image *img = Fl_Shared_Image::get( icon_p, 32, 32 );
     
         free( icon_p );
 
@@ -138,7 +139,10 @@ class NSM_Client : public Fl_Group
                 
                 if ( img )
                 {
-                    icon_box->image( img );
+		    if ( img->w() > 32 || img->h() > 32 )
+			WARNING("Client %s has stupidly large icon (%ix%i), ignoring.", _client_name, img->w(), img->h() );
+		    else
+			icon_box->image( img );
                 }
             }
 

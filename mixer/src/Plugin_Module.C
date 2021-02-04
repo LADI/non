@@ -66,6 +66,8 @@ Plugin_Module::Plugin_Module ( ) : Module( 50, 35, name() )
 {
     init();
 
+    color( fl_color_average(  fl_rgb_color( 0x99, 0x7c, 0x3a ), FL_BACKGROUND_COLOR, 1.0f ));
+    
     end();
 
     log_create();
@@ -96,6 +98,24 @@ Plugin_Module::get ( Log_Entry &e ) const
 void
 Plugin_Module::set ( Log_Entry &e )
 {
+    int n = 0;
+
+    /* we need to have number() defined before we create the control inputs in load() */
+    for ( int i = 0; i < e.size(); ++i )
+    {
+        const char *s, *v;
+	
+        e.get( i, &s, &v );
+
+    	if ( ! strcmp(s, ":number" ) )
+	{
+	    n = atoi(v);
+	}
+    }
+    
+    /* need to call this to set label even for version 0 modules */
+    number(n);
+    
     for ( int i = 0; i < e.size(); ++i )
     {
         const char *s, *v;
@@ -441,11 +461,15 @@ Plugin_Module::load ( unsigned long id )
     {
         /* unknown plugin ID */
         WARNING( "Unknown plugin ID: %lu", id );
-        label( "----" );
+	char s[25];
+
+	snprintf( s, 24, "! %lu", id );
+	
+        base_label( s );
         return false;
     }
 
-    label( _idata->descriptor->Name );
+    base_label( _idata->descriptor->Name );
 
     if ( _idata->descriptor )
     {

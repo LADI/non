@@ -21,6 +21,8 @@ def options(opt):
                     help='Build for debugging')
     opt.add_option('--disable-sse', action='store_false', default=True, dest='sse',
                     help='Disable SSE optimization')
+    opt.add_option('--disable-native-cpu-optimization', action='store_false', default=True, dest='native',
+                    help='Disable native CPU optimziation (e.g. for generic binary packaging)')
     opt.add_option('--project', action='store', default=False, dest='project',
                     help='Limit build to a single project (' + ', '.join( projects ) + ')')
 
@@ -31,7 +33,7 @@ def configure(conf):
     conf.load('compiler_c')
     conf.load('compiler_cxx')
     conf.load('gnu_dirs')
-    conf.load('ntk_fluid')
+    conf.load('ntk_fluid',tooldir='tools.waf')
     conf.load('gccdeps')
     conf.line_just = 52
 
@@ -94,6 +96,13 @@ def configure(conf):
             "-ffast-math",
             "-pipe"
             ]
+
+    if Options.options.native:
+        print('Using native CPU optimization')
+        optimization_flags.extend( [
+            "-march=native",
+            "-mtune=native", # ~200% DSP performance increase on AMD bulldozer...
+        ]);
     
     if Options.options.sse:
         print('Using SSE optimization')

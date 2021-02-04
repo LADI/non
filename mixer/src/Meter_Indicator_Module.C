@@ -31,18 +31,22 @@
 #include "FL/Fl_Dial.H"
 #include "FL/Fl_Labelpad_Group.H"
 #include "FL/Fl_Scalepack.H"
+#include <FL/fl_draw.H>
 
 #include "Chain.H"
 #include "DPM.H"
+#include "dsp.h"
 
 #include "FL/test_press.H"
 
 
+const int DX = 1;
 
 Meter_Indicator_Module::Meter_Indicator_Module ( bool is_default )
     : Module ( is_default, 50, 100, name() )
 {
     box( FL_FLAT_BOX );
+    /* color( fl_darker( fl_darker( FL_BACKGROUND_COLOR ))); */
     color( FL_BLACK );
 
     _disable_context_menu = false;
@@ -53,15 +57,23 @@ Meter_Indicator_Module::Meter_Indicator_Module ( bool is_default )
 
     control_input[0].hints.visible = false;
 
-    dpm_pack = new Fl_Scalepack( x(), y(), w(), h() );
-    dpm_pack->color( FL_BACKGROUND_COLOR );
-    dpm_pack->box( FL_FLAT_BOX );
+    /* dpm_pack = new Fl_Scalepack( x() + 2, y() + 2, w() - 4, h() - 4 ); */
+    /* /\* dpm_pack->color( FL_BACKGROUND_COLOR ); *\/ */
+    /* dpm_pack->box( FL_NO_BOX ); */
+    /* dpm_pack->type( FL_HORIZONTAL ); */
+    /* dpm_pack->spacing(1); */
+
+        dpm_pack = new Fl_Scalepack( x() + 20 + 2, y() + 2, w() - 20 - 4, h() - 4 );
+    /* dpm_pack->color( FL_BACKGROUND_COLOR ); */
+    dpm_pack->box( FL_NO_BOX );
     dpm_pack->type( FL_HORIZONTAL );
+    dpm_pack->spacing(1);
 
-    end();
+     end();
 
-    control_value = new float[1];
-    *control_value = -70.0f;
+     control_value = new float[1*2];
+     control_value[0] = 
+	 control_value[1] = 0;
 
     align( (Fl_Align)(FL_ALIGN_CENTER | FL_ALIGN_INSIDE ) );
 
@@ -80,6 +92,32 @@ Meter_Indicator_Module::~Meter_Indicator_Module ( )
 }
 
 
+
+void Meter_Indicator_Module::resize ( int X, int Y, int W, int H )
+{
+    Fl_Group::resize(X,Y,W,H);
+    dpm_pack->resize( x() + 20 + DX , y() + DX, w() - 20 - DX*2, h() - DX*2);
+}
+
+void
+Meter_Indicator_Module::draw ( void )
+{
+    /* if ( damage() & FL_DAMAGE_ALL ) */
+
+    /* draw_box(x(),y(),w(),h()); */
+    Fl_Group::draw();
+
+    if ( damage() & FL_DAMAGE_ALL )
+    {
+	/* need to trigger redraw of exterior label */
+	if ( dpm_pack->children() )
+	{
+	    ((DPM*)dpm_pack->child(0))->public_draw_label( x(), y(), 19, h() );
+	}
+    }
+    
+    fl_rect( x(), y(), w(), h(), fl_darker(fl_darker(FL_BACKGROUND_COLOR)));
+}
 
 void
 Meter_Indicator_Module::get ( Log_Entry &e ) const
@@ -138,37 +176,29 @@ Meter_Indicator_Module::update ( void )
         // A little hack to detect that the connected module's number
         // of control outs has changed.
         Port *p = control_input[0].connected_port();
+	
+	for ( int i = 0; i < dpm_pack->children(); ++i )
+	{
+	    DPM *o = (DPM*)dpm_pack->child(i);
 
-        if ( dpm_pack->children() != p->hints.dimensions )
-        {
-/*             engine->lock(); */
+	    float dB = CO_DB( control_value[i] );
+	    
+	    if ( dB > o->value() )
+		o->value( dB );
 
-            dpm_pack->clear();
+	    o->update();
+	    /* else */
+	    /* { */
+	    /* 	/\* do falloff *\/ */
+	    /* 	float f = o->value() - 0.75f; */
+	    /* 	if ( f < -70.0f ) */
+	    /* 	    f = -70.0f; */
+		
+	    /* 	o->value( f ); */
+	    /* } */
 
-            control_value = new float[p->hints.dimensions];
-
-            for ( int i = p->hints.dimensions; i--; )
-            {
-
-                DPM *dpm = new DPM( x(), y(), w(), h() );
-                dpm->type( FL_VERTICAL );
-
-                dpm_pack->add( dpm );
-
-                control_value[i] = -70.0f;
-                dpm->value( -70.0f );
-            }
-
-/*             engine->unlock(); */
-        }
-        else
-        {
-            for ( int i = 0; i < dpm_pack->children(); ++i )
-            {
-                ((DPM*)dpm_pack->child( i ))->value( control_value[i] );
-                control_value[i] = -70.0f;
-            }
-        }
+	    control_value[i] = 0;
+	}
     }
 }
 
@@ -228,7 +258,7 @@ Meter_Indicator_Module::handle_control_changed ( Port *p )
 
             control_value = new float[p->hints.dimensions];
 
-            for ( int i = p->hints.dimensions; i--; )
+            for ( int i = 0; i < p->hints.dimensions; i++ )
             {
                 DPM *dpm = new DPM( x(), y(), w(), h() );
                 dpm->type( FL_VERTICAL );
@@ -237,8 +267,10 @@ Meter_Indicator_Module::handle_control_changed ( Port *p )
                 dpm_pack->add( dpm );
                 dpm_pack->redraw();
 
-                control_value[i] = -70.0f;
-                dpm->value( -70.0f );
+                control_value[i] = 0;
+				
+                dpm->value( CO_DB( control_value[i] ));
+                
             }
 
             redraw();
@@ -256,12 +288,22 @@ Meter_Indicator_Module::process ( nframes_t )
     if ( control_input[0].connected() )
     {
         Port *p = control_input[0].connected_port();
+	
+	volatile float *cv = control_value;
+	float *pv = (float*)control_input[0].buffer();
 
         for ( int i = 0; i < p->hints.dimensions; ++i )
 	  {
-              float dB = ((float*)control_input[0].buffer())[i];
-              if ( dB > control_value[i])
-                  control_value[i] = dB;
+	      /* peak value since we last checked */
+	      if ( *pv > *cv )
+	      {
+		  *cv = *pv;
+		  /* reset now that we've got it */
+		  *pv = 0;
+	      }
+
+	      cv++;
+	      pv++;
 	  }
     }
 }

@@ -25,6 +25,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Pack.H>
 #include <FL/Fl_Scalepack.H>
+#include <FL/Enumerations.H>
 
 #include "dsp.h"
 
@@ -47,6 +48,8 @@ extern char *instance_name;
 
 #include "Mixer.H"
 #include "Group.H"
+
+#include "Project.H"
 
 
 static JACK_Module *receptive_to_drop = NULL;
@@ -164,7 +167,7 @@ JACK_Module::JACK_Module ( bool log )
             Fl_Browser *o = connection_display = new Fl_Browser( 0, 0, w(), h() );
             o->has_scrollbar(Fl_Browser_::VERTICAL);
             o->textsize( 10 );
-            o->textcolor( FL_LIGHT3 );
+            o->textcolor( fl_contrast( FL_LIGHT3, FL_BACKGROUND_COLOR ) );
             o->textfont( FL_COURIER );
             o->box( FL_FLAT_BOX );
             o->color( FL_DARK1 );
@@ -298,12 +301,23 @@ JACK_Module::update_connection_status ( void )
         return;
     }
 
+    /* /\* causes a lot of unnecessary redraws to do this when loading *\/ */
+    /* if ( Project::is_opening_closing() ) */
+    /* 	return; */
+
+    /* FIXME: only do something if port list actually changed! */
     std::list<std::string> output_names = get_connections_for_ports( aux_audio_output );
     std::list<std::string> input_names = get_connections_for_ports( aux_audio_input );
 
+    if ( (unsigned int)connection_display->size() == input_names.size() + output_names.size() )
+	/* looks like nothing was added or removed, bail.
+	   FIXME: this would be better if it actually compared the lists item by item. */
+	return;
+    
     connection_display->clear();
 
     int n = 0;
+
     for ( std::list<std::string>::const_iterator j = input_names.begin();
           j != input_names.end();
           j++ )
@@ -599,13 +613,12 @@ JACK_Module::handle ( int m )
             if ( Fl::event_inside( output_connection_handle ) ||
                  Fl::event_inside( output_connection2_handle ) ||
                  Fl::event_inside( input_connection_handle ) )
-            {
                 fl_cursor( FL_CURSOR_HAND );
-            }
             else
                 fl_cursor( FL_CURSOR_DEFAULT );
 
-            Module::handle(m);
+	    /* This calls Fl_Group::handle() which somehow prevent DND FL_PASTE event from being delivered later */
+            /* Module::handle(m); */
             return 1;
         case FL_ENTER:
         case FL_DND_ENTER:

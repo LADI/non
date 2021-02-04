@@ -46,14 +46,17 @@ class Module : public Fl_Group, public Loggable {
     int _ins;
     int _outs;
     int _instances;
-    nframes_t _nframes;
     Chain *_chain;
     bool _is_default;
-
+    char *_base_label;
+    
+    nframes_t _nframes;
     static nframes_t _sample_rate;
     static Module *_copied_module_empty;
     static char *_copied_module_settings;
 
+    int _number;
+    
     void init ( void );
 
     void insert_menu_cb ( const Fl_Menu_ *m );
@@ -74,6 +77,13 @@ protected:
 
 public:
 
+    
+    virtual int number ( void ) const { return _number; }
+    virtual void number ( int v );
+
+    virtual const char * base_label ( void ) const { return _base_label ? _base_label : name(); }
+    virtual void base_label ( const char * );
+    
     virtual nframes_t get_module_latency ( void ) const { return 0; }
 
     virtual void get_latency ( JACK::Port::direction_e dir, nframes_t *min, nframes_t *max ) const;
@@ -103,6 +113,7 @@ public:
                     connected_port()->_buf = _buf;
             }
 
+	
     public:
 
         enum Direction { INPUT, OUTPUT };
@@ -120,7 +131,7 @@ public:
             float default_value;
             int dimensions;
             bool visible;
-
+	    
             Hints ( )
                 {
                     type = LINEAR;
@@ -153,6 +164,9 @@ public:
                 _by_number_path = 0;
                 _by_number_number = -1;
                 _jack_port = 0;
+		/* _feedback_value = -2; */
+		_pending_feedback = false;
+		_feedback_milliseconds = 0;
             }
 
         Port ( const Port& p )
@@ -169,21 +183,27 @@ public:
                 _by_number_path = 0;
                 _by_number_number = -1;
                 _jack_port = p._jack_port;
+		/* _feedback_value = p._feedback_value; */
             }
 
         virtual ~Port ( )
             {
+		/* FIXME: will this cause problems with cloning an instance? */
+		disconnect();
+		
                 if ( _by_number_path )
                     free( _by_number_path );
                 _by_number_path = NULL;
             }
 
+
+	nframes_t nframes ( void ) const { return _nframes; }
+	void  nframes ( nframes_t n) { _nframes = n; }
         const char *name ( void ) const { return _name; }
         Type type ( void ) const { return _type; }
         Direction direction ( void ) const  { return _direction; }
 
         Module * module ( void ) const { return _module; }
-        nframes_t nframes ( void ) const { return _nframes; }
 
         void buffer ( void *buf, nframes_t nframes ) { _buf = buf; _nframes = nframes; };
         void *buffer ( void ) const { return _buf; }
@@ -253,12 +273,25 @@ public:
                 /* control and external audio ports belong to a graph */
                 return _connected.size() > 0;
         }
+
+	unsigned int nconnected ( void ) const { return _connected.size(); }
+	    
         bool connected_osc ( void ) const;
 
         Port *connected_port ( void ) const
             {
-                ASSERT( _type == Port::CONTROL, "Operation only available for control ports" );                
                 return _connected.size() == 0 ? NULL : _connected.front();                
+            }
+
+	Port *connected_port ( int n ) const
+            {
+		int j = 0;
+		for ( std::list<Module::Port*>::const_iterator i = _connected.begin();
+		      i != _connected.end(); ++i, ++j )
+		    if ( j == n )
+			return *i;
+		
+		return NULL;
             }
 
         void connect_to ( Port *to )
@@ -295,7 +328,7 @@ public:
                 _buf = buf;
             }
 
-        void send_feedback ( void );
+        void send_feedback ( bool force );
 
         bool connected_to ( Port *p )
             {
@@ -321,23 +354,15 @@ public:
         /* disconnect from *all* connected ports */
         void disconnect ( void )
             {
-                if ( _connected.size() )
-                {
-                    for ( std::list<Port*>::iterator i = _connected.begin(); i != _connected.end(); i++ )
-                    {
-                        Port *p = *i;
-
-                        /* iterator about to be invalidated... */
-                        i = _connected.erase(i);
-                        
-                        disconnect(p);
-                    }
-                }
-            }
-
+		while ( _connected.size() )
+		    disconnect(_connected.front());
+	    }
+	
         void jack_port ( JACK::Port *v ) { _jack_port = v; }
         JACK::Port *jack_port ( void ) const { return _jack_port; }
 
+	void schedule_feedback ( void ) { _pending_feedback = true; }
+	
     private:
 
         char *generate_osc_path ( void );
@@ -356,6 +381,10 @@ public:
         OSC::Signal *_scaled_signal;
         OSC::Signal *_unscaled_signal;
 
+	/* float _feedback_value; */
+	bool _pending_feedback;
+	unsigned long long _feedback_milliseconds;
+	
         static void handle_signal_connection_state_changed ( OSC::Signal *, void *o );
     };
 
@@ -375,7 +404,6 @@ public:
 
     LOG_NAME_FUNC( Module );
 
-    nframes_t nframes ( void ) const { return _nframes; }
     virtual void resize_buffers ( nframes_t v ) { _nframes = v; }
 
 
@@ -496,7 +524,8 @@ public:
 
     bool show_analysis_window ( void );
 
-    void send_feedback ( void );
+    void send_feedback ( bool force );
+    void schedule_feedback ( void );
     virtual bool initialize ( void ) { return true; }
 
     /* for the given number of inputs, return how many outputs this
@@ -555,7 +584,9 @@ protected:
     bool add_aux_port ( bool input, const char *prefix, int n , JACK::Port::type_e type );
 
 public:
-    nframes_t sample_rate ( void ) const { return Module::_sample_rate; }
+    
+    static nframes_t sample_rate ( void )  { return Module::_sample_rate; }
+    nframes_t nframes ( void ) { return _nframes; }
 
 
     void auto_connect_outputs();
@@ -568,7 +599,7 @@ public:
     bool add_aux_audio_input ( const char *prefix, int n );
     bool add_aux_cv_input ( const char *prefix, int n );
 
-    static void set_sample_rate ( nframes_t srate ) { _sample_rate = srate; }
+    static void sample_rate ( nframes_t srate ) { _sample_rate = srate; }
 
     void command_open_parameter_editor();
     virtual void command_activate ( void );

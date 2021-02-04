@@ -120,6 +120,7 @@ namespace OSC
     struct Peer
     {
         bool _scanning;
+	int _scanning_current;
 
         char *name;
         lo_address addr;
@@ -241,6 +242,8 @@ namespace OSC
         std::list<Method*> _methods;
 
         char *_learning_path;
+	void (*_learning_callback)(void *);
+	void *_learning_userdata;
 
         class TranslationDestination {
 
@@ -304,8 +307,8 @@ namespace OSC
 
     public:
 
-        void send_feedback ( const char *path, float v );
-        void learn ( const char *path );
+        void send_feedback ( const char *path, float v, bool force );
+        void learn ( const char *path, void (*callback)(void*), void *userdata );
 
         lo_address address ( void )
             {

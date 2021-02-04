@@ -20,6 +20,7 @@
 #include "Module.H"
 #include <FL/fl_draw.H>
 #include <FL/fl_ask.H>
+#include <FL/Enumerations.H>
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,9 @@
 #include "OSC/Endpoint.H"
 
 #include "string_util.h"
+
+#include "time.h"
+
 
 
 
@@ -104,27 +108,36 @@ Module::~Module ( )
         if ( control_input[i].connected() )
         {
             Module *o = (Module*)control_input[i].connected_port()->module();
-            
-            if ( ! o->is_default() )
-            {
-                control_input[i].disconnect();
 
-                DMESSAGE( "Deleting connected module %s", o->label() );
-                
-                delete o;
-            }
-            else
-            {
-                control_input[i].disconnect();
-            }
-
-        }
-
+	    if ( !o )
+	    {
+		DWARNING( "Programming error. Connected port has null module. %s %s",
+			 
+			  label(),
+			  control_input[i].connected_port()->name());
+	    }
+	    
+	    control_input[i].disconnect();
+	    
+	    if ( o )
+	    {
+		if ( ! o->is_default() )
+		{
+		    DMESSAGE( "Deleting connected module %s", o->label() );
+		    
+		    delete o;
+		}
+	    }
+	}
+	
         control_input[i].destroy_osc_port();
     }
     for ( unsigned int i = 0; i < control_output.size(); ++i )
         control_output[i].disconnect();
 
+    aux_audio_output.clear();
+    aux_audio_input.clear();
+    
     audio_input.clear();
     audio_output.clear();
 
@@ -156,7 +169,9 @@ Module::init ( void )
     _chain = 0;
     _instances = 1;
     _bypass = 0;
-
+    _base_label = NULL;
+    _number = -2;	/* magic number indicates old instance, before numbering */
+    
     box( FL_UP_BOX );
     labeltype( FL_NO_LABEL );
     align( FL_ALIGN_CENTER | FL_ALIGN_INSIDE );
@@ -164,7 +179,9 @@ Module::init ( void )
     selection_color( FL_YELLOW );
 
     labelsize(12);
-    color( fl_rgb_color( 122,190,200 ) );
+
+    color( fl_color_average( fl_rgb_color( 0x3a, 0x99, 0x7c ), FL_BACKGROUND_COLOR, 1.0f ));
+
     tooltip();
 }
 
@@ -192,6 +209,8 @@ Module::get ( Log_Entry &e ) const
     e.add( ":is_default", is_default() );
     e.add( ":chain", chain() );
     e.add( ":active", ! bypass() );
+    if ( number() >= 0 )
+	e.add( ":number", number() );
 }
 
 bool
@@ -222,7 +241,8 @@ Module::copy ( void ) const
             /* we don't want this module to get added to the current
                chain... */
             if ( !( !strcmp( s, ":chain" ) ||
-                    !strcmp( s, ":is_default" ) ) )
+                    !strcmp( s, ":is_default" ) ||
+		    !strcmp( s, ":number" ) ) )
             {
                 DMESSAGE( "%s = %s", s, v );
                 ne->add_raw( s, v );
@@ -235,6 +255,7 @@ Module::copy ( void ) const
     return true;
 }
 
+    
 void
 Module::paste_before ( void )
 {
@@ -251,6 +272,8 @@ Module::paste_before ( void )
 
     m->set( le );
 
+    m->number(-1);
+
     if ( ! chain()->insert( this, m ) )
     {
         fl_alert( "Copied module cannot be inserted at this point in the chain" );
@@ -264,22 +287,48 @@ Module::paste_before ( void )
     m->copy();
 }
 
+void
+Module::number ( int v )
+{
+    _number = v;
+
+    char s[255];
+
+    if ( v > 0 && !is_default() )
+	snprintf( s, sizeof(s), "%s.%i", base_label(), v );
+    else
+	snprintf( s, sizeof(s), "%s", base_label() );
+    
+    copy_label( s );
+}
+
+void
+Module::base_label ( const char *s )
+{
+    if ( _base_label )
+	free( _base_label );
+
+    _base_label = NULL;
+
+    if ( s )
+	_base_label = strdup(s);
+}
+
 
 
 void
 Module::Port::disconnect_from_strip ( Mixer_Strip *o )
 {
-    for ( std::list<Port*>::iterator i = _connected.begin(); i != _connected.end(); i++ )
+    for ( std::list<Port*>::iterator i = _connected.begin(); i != _connected.end();  )
     {
         Port *p = *i;
 
+	i++;			/* iterator trick */
+	
         if ( p->module()->chain()->strip() == o )
         {
-            /* iterator about to be invalidated... */
-            i = _connected.erase(i);
-                        
             disconnect(p);
-        }
+	}
     }               
 }
 
@@ -319,8 +368,11 @@ Module::Port::osc_number_path ( void )
 }
 
 void
-Module::Port::send_feedback ( void )
+Module::Port::send_feedback ( bool force )
 {
+    if ( !force && !_pending_feedback )
+	return;
+    
     float f = control_value();
 
     if ( hints.ranged )
@@ -333,26 +385,53 @@ Module::Port::send_feedback ( void )
         f =  ( f - offset ) / scale;
     }
     
-    if ( f > 1.0 )
-        f = 1.0;
-    else if ( f < 0.0 )
-        f = 0.0;
+    if ( f > 1.0f )
+        f = 1.0f;
+    else if ( f < 0.0f )
+        f = 0.0f;
+
+    /* struct timespec t; */
+    /* clock_gettime( CLOCK_MONOTONIC, &t ); */
+
+    /* /\* don't send feedback more at more than 30Hz rate. *\/ */
+    /* unsigned long long ms = (t.tv_sec * 1000 + ( t.tv_nsec / 1000000 )); */
+    /* if ( ms - _feedback_milliseconds < 1000 / 30 ) */
+    /* 	return; */
     
+    /* _feedback_milliseconds = ms; */
+		 
     if ( _scaled_signal )
     {
-        /* send feedback for by_name signal */
-        mixer->osc_endpoint->send_feedback( _scaled_signal->path(), f );
-        
-        /* send feedback for by number signal */
-        mixer->osc_endpoint->send_feedback( osc_number_path(), f  );
+	/* if ( fabsf( _feedback_value - f ) > (1.0f / 128.0f) ) */
+	{
+            /* only send feedback if value has changed significantly since the last time we sent it. */
+	    /* DMESSAGE( "signal value: %f, controL_value: %f", _scaled_signal->value(), f ); */
+	    /* send feedback for by_name signal */
+	    mixer->osc_endpoint->send_feedback( _scaled_signal->path(), f, force );
+	
+	    /* send feedback for by number signal */
+	    mixer->osc_endpoint->send_feedback( osc_number_path(), f, force );
+	
+	    /* _feedback_value = f; */
+
+	    _pending_feedback = false;
+	    /* _scaled_signal->value( f ); */
+	}
     }
 }
 
 void
-Module::send_feedback ( void )
+Module::schedule_feedback ( void )
 {
     for ( int i = 0; i < ncontrol_inputs(); i++ )
-        control_input[i].send_feedback();
+        control_input[i].schedule_feedback();
+}
+
+void
+Module::send_feedback ( bool force )
+{
+    for ( int i = 0; i < ncontrol_inputs(); i++ )
+        control_input[i].send_feedback(force);
 }
 
 void
@@ -361,7 +440,11 @@ Module::handle_control_changed ( Port *p )
     if ( _editor )
         _editor->handle_control_changed ( p );
 
-    p->send_feedback();
+
+    p->schedule_feedback();
+    
+    /* DMESSAGE("Control changed"); */
+    /* p->send_feedback(false); */
 }
 
 /* bool */
@@ -387,12 +470,7 @@ Module::Port::generate_osc_path ()
         return NULL;
     }
 
-    int n = module()->chain()->get_module_instance_number( module() );
-
-    if ( n > 0 )        
-        asprintf( &path, "/strip/%s/%s.%i/%s", module()->chain()->name(), p->module()->label(), n, p->name() );
-    else
-        asprintf( &path, "/strip/%s/%s/%s", module()->chain()->name(), p->module()->label(), p->name() );
+    asprintf( &path, "/strip/%s/%s/%s", module()->chain()->name(), p->module()->label(), p->name() );
 
     char *s = escape_url( path );
     
@@ -531,6 +609,24 @@ Module::Port::osc_control_change_cv ( float v, void *user_data )
 void
 Module::set ( Log_Entry &e )
 {
+    /* have to do this before adding to chain... */
+
+    int n = -2;
+    
+    for ( int i = 0; i < e.size(); ++i )
+    {
+        const char *s, *v;
+
+        e.get( i, &s, &v );
+
+    	if ( ! strcmp(s, ":number" ) )
+	{
+	    n = atoi(v);
+	}
+    }
+    
+    number(n);
+    
     for ( int i = 0; i < e.size(); ++i )
     {
         const char *s, *v;
@@ -677,6 +773,9 @@ Module::draw_box ( int tx, int ty, int tw, int th )
 
     Fl_Color c = color();
 
+    if ( bypass() )
+	c = fl_darker(fl_darker(c));
+    
     if ( ! active_r() )
         c = fl_inactive( c );
 
@@ -767,8 +866,14 @@ Module::draw_label ( int tx, int ty, int tw, int th )
 
     Fl_Color c = fl_contrast( FL_FOREGROUND_COLOR, color() );
 
-    fl_color( active_r() && ! bypass() ? c : fl_inactive(c) );
+    if ( bypass() )
+	c = fl_darker(c);
+    
+    /* fl_color( active_r() && ! bypass() ? c : fl_inactive(c) ); */
 
+    if ( !active_r() )
+	c = fl_inactive(c);
+    
     fl_font( FL_HELVETICA, labelsize() );
 
     char *di = strstr( lab, " -" );
@@ -817,15 +922,18 @@ Module::draw_label ( int tx, int ty, int tw, int th )
    
     }
 
+
+    fl_color( c );
+
     fl_draw( s ? s : lab, tx, ty, tw, th, align() | FL_ALIGN_CLIP );
     
-    if ( bypass() )
-    {
-        fl_color( fl_color_add_alpha( fl_color(), 127 )  );
-        fl_line_style( FL_SOLID, 2 );
-        fl_line( tx, ty + th * 0.5, tx + tw, ty + th * 0.5 );
-        fl_line_style( FL_SOLID, 0 );
-    }
+    /* if ( bypass() ) */
+    /* { */
+    /*     fl_color( fl_color_add_alpha( fl_color(), 127 )  ); */
+    /*     fl_line_style( FL_SOLID, 2 ); */
+    /*     fl_line( tx, ty + th * 0.5, tx + tw, ty + th * 0.5 ); */
+    /*     fl_line_style( FL_SOLID, 0 ); */
+    /* } */
 
 
     free(lab);
@@ -846,19 +954,7 @@ Module::insert_menu_cb ( const Fl_Menu_ *m )
     
     if ( !strcmp( picked, "Aux" ) )
     {
-        int n = 0;
-        for ( int i = 0; i < chain()->modules(); i++ )
-        {
-            if ( !strcmp( chain()->module(i)->name(), "AUX" ) )
-                n++;
-        }
-
         AUX_Module *jm = new AUX_Module();
-        jm->chain( chain() );
-        jm->number( n );
-        jm->configure_inputs( ninputs() );
-        jm->configure_outputs( ninputs() );
-        jm->initialize();
      
         mod = jm;
     }
@@ -876,9 +972,6 @@ Module::insert_menu_cb ( const Fl_Menu_ *m )
             Spatializer_Module *jm = new Spatializer_Module();
             
             jm->chain( chain() );
-//        jm->number( n );
-//        jm->configure_inputs( ninputs() );
-//        jm->configure_outputs( ninputs() );
             jm->initialize();
             
             mod = jm;
@@ -886,8 +979,6 @@ Module::insert_menu_cb ( const Fl_Menu_ *m )
     }
     else if ( !strcmp( picked, "Gain" ) )
             mod = new Gain_Module();
-    /* else if ( !strcmp( picked, "Spatializer" ) ) */
-    /*         mod = new Spatializer_Module(); */
     else if ( !strcmp( picked, "Meter" ) )
         mod = new Meter_Module();
     else if ( !strcmp( picked, "Mono Pan" ))
@@ -908,6 +999,8 @@ Module::insert_menu_cb ( const Fl_Menu_ *m )
 
     if ( mod )
     {
+	mod->number(-1);
+	
         if ( ! chain()->insert( this, mod ) )
         {
             fl_alert( "Cannot insert this module at this point in the chain" );
@@ -1180,7 +1273,19 @@ Module::freeze_ports ( void )
     for ( int i = 0; i < ncontrol_inputs(); ++i )
     {
         if ( control_input[i].connected() )
-            control_input[i].connected_port()->module()->freeze_ports();
+	{
+	    if ( ! control_input[i].connected_port()->module()  )
+	    {
+		DWARNING( "Programming error. Connected port has null module. %s %s",
+			 
+			 name(),
+			 control_input[i].connected_port()->name());
+	    }
+	    else
+	    {
+		control_input[i].connected_port()->module()->freeze_ports();
+	    }
+	}
     }
 
     for ( unsigned int i = 0; i < aux_audio_input.size(); ++i )
@@ -1247,10 +1352,10 @@ Module::auto_disconnect_outputs ( void )
     {
         Module::Port *p = &aux_audio_output[i];
 
-        if ( p->connected_port() )
+        while ( p->connected() )
         {
-            p->connected_port()->jack_port()->disconnect( p->jack_port()->jack_name() );
-            p->disconnect();
+	    p->connected_port()->jack_port()->disconnect( p->jack_port()->jack_name() );
+            p->disconnect(p->connected_port());
         }
     }
 }

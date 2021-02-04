@@ -78,7 +78,8 @@ private:
     void load_translations ( void );
 
     static void send_feedback_cb ( void *v );
-    void send_feedback ( void );
+    void send_feedback ( bool force );
+    void schedule_feedback ( void );
     void redraw_windows ( void );
 
     static void handle_dirty ( int, void *v );
@@ -159,6 +160,8 @@ public:
     void save_project_settings ( void );
     void load_project_settings ( void );
 
+    void renumber_strips ( void );
+    
 public:
     
     void command_toggle_fader_view ( void );

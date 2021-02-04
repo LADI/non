@@ -224,6 +224,8 @@ Audio_Region::menu_cb ( const Fl_Menu_ *m )
         _fade_in.type = Fade::Logarithmic;
     else if ( ! strcmp( picked, "Fade/In/Parabolic" ) )
         _fade_in.type = Fade::Parabolic;
+    else if ( ! strcmp( picked, "Fade/In/Disabled" ) )
+        _fade_in.type = Fade::Disabled;
     else if ( ! strcmp( picked, "Fade/Out/Linear" ) )
         _fade_out.type = Fade::Linear;
     else if ( ! strcmp( picked, "Fade/Out/Sigmoid" ) )
@@ -232,6 +234,8 @@ Audio_Region::menu_cb ( const Fl_Menu_ *m )
         _fade_out.type = Fade::Logarithmic;
     else if ( ! strcmp( picked, "Fade/Out/Parabolic" ) )
         _fade_out.type = Fade::Parabolic;
+    else if ( ! strcmp( picked, "Fade/Out/Disabled" ) )
+        _fade_out.type = Fade::Disabled;
     else if ( ! strcmp( picked, "/Color" ) )
         box_color( fl_show_colormap( box_color() ) );
     else if ( ! strcmp( picked, "/Split at mouse" ) )
@@ -351,12 +355,16 @@ Audio_Region::menu ( void )
             { "Sigmoid",          0, 0, 0,  FL_MENU_RADIO | ( it == Fade::Sigmoid     ? FL_MENU_VALUE : 0 ) },
             { "Logarithmic",      0, 0, 0,  FL_MENU_RADIO | ( it == Fade::Logarithmic ? FL_MENU_VALUE : 0 ) },
             { "Parabolic",        0, 0, 0,  FL_MENU_RADIO | ( it == Fade::Parabolic   ? FL_MENU_VALUE : 0 ) },
+            { "Disabled",        0, 0, 0,  FL_MENU_RADIO | ( it == Fade::Disabled   ? FL_MENU_VALUE : 0 ) },
+
             { 0                   },
             { "Out",              0, 0, 0,  FL_SUBMENU    },
             { "Linear",           0, 0, 0,  FL_MENU_RADIO | ( ot == Fade::Linear      ? FL_MENU_VALUE : 0 ) },
             { "Sigmoid",          0, 0, 0,  FL_MENU_RADIO | ( ot == Fade::Sigmoid     ? FL_MENU_VALUE : 0 ) },
             { "Logarithmic",      0, 0, 0,  FL_MENU_RADIO | ( ot == Fade::Logarithmic ? FL_MENU_VALUE : 0 ) },
             { "Parabolic",        0, 0, 0,  FL_MENU_RADIO | ( ot == Fade::Parabolic   ? FL_MENU_VALUE : 0 ) },
+            { "Disabled",        0, 0, 0,  FL_MENU_RADIO | ( ot == Fade::Disabled   ? FL_MENU_VALUE : 0 ) },
+
             { 0                   },
             { 0 },
             { "Color",        0, 0, 0,  inherit_track_color ? FL_MENU_INACTIVE : 0 },
@@ -398,6 +406,9 @@ Audio_Region::draw_fade ( const Fade &fade, Fade::fade_dir_e dir, bool line, int
     const int height = dh;
     const int width = timeline->ts_to_x( fade.length );
 
+    if ( Fade::Disabled == fade.type )
+	return;
+    
     if ( width < 4 )
         /* too small to draw */
         return;
@@ -477,7 +488,7 @@ Audio_Region::draw_box( void )
     }
 
     Fl_Boxtype b;
-    Fl_Color c = selected() ? fl_color_average( color, fl_rgb_color(10,10,10), 0.4f ) : color;
+    Fl_Color c = color;// selected() ? fl_color_average( color, fl_rgb_color(10,10,10), 0.4f ) : color;
 
     if ( Audio_Region::show_box )
     {
@@ -566,7 +577,7 @@ Audio_Region::draw ( void )
         /*                                Audio_Region::inherit_track_color ? sequence()->track()->color() :  _box_color, */
         /*                                0.75f ); */
     
-        fl_color( fl_color_add_alpha( FL_DARK1, 127 ) );
+        fl_color( fl_color_add_alpha( fl_rgb_color( 20,20,20 ), 127 ) );
 
         draw_fade( _fade_in, Fade::In, false, X, W );
         draw_fade( _fade_out, Fade::Out, false, X, W );
@@ -713,6 +724,29 @@ Audio_Region::draw ( void )
         fl_line_style( FL_SOLID, 0 );
     }
 
+
+    /* draw dog ear */
+    {
+	const int pw = 8;
+	
+	/* fl_color( fl_color_add_alpha( FL_WHITE, 127 ) ); */
+	/* fl_color( FL_BACKGROUND_COLOR ); */
+	fl_color( fl_color_add_alpha( FL_WHITE, 127 ) );
+
+	fl_begin_polygon();
+
+	fl_vertex( line_x() + Fl::box_dx(box()), 
+		   y() + Fl::box_dy(box()) );
+
+	fl_vertex( pw + line_x() + Fl::box_dx(box()), 
+		   y() + Fl::box_dy(box()) );
+
+	fl_vertex( line_x() + Fl::box_dx(box()), 
+		  pw + y() + Fl::box_dy(box()) );
+
+	fl_end_polygon();
+    }
+	    
     if ( selected() )
         draw_selection_frame( line_x() + Fl::box_dx(box()),
                               y() + Fl::box_dy(box()),
@@ -760,6 +794,8 @@ Audio_Region::split ( nframes_t where )
 
     Audio_Region *copy = new Audio_Region( *this );
 
+    timeline->sequence_lock.wrlock();
+
     {
         Logger _log( copy );
 
@@ -768,6 +804,8 @@ Audio_Region::split ( nframes_t where )
 
         Sequence_Region::split( copy, where );
     }
+
+    timeline->sequence_lock.unlock();
 
     log_end();
     
@@ -784,6 +822,10 @@ Audio_Region::handle ( int m )
     static bool copied = false;
     static nframes_t os;
 
+    if ( !active_r() )
+	/* don't mess with anything while recording... */
+	return 0;
+    
     int X = Fl::event_x();
     int Y = Fl::event_y();
     

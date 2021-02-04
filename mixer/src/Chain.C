@@ -174,7 +174,9 @@ Chain::~Chain ( )
 
     _deleting = true;
 
-    client()->lock();
+    /* FIXME: client may already be dead during teardown if group is destroyed first. */
+    if ( client() )
+	client()->lock();
 
     for ( unsigned int i = scratch_port.size(); i--; )
         free( (sample_t*)scratch_port[i].buffer() );
@@ -182,9 +184,12 @@ Chain::~Chain ( )
     /* if we leave this up to FLTK, it will happen after we've
      already destroyed the client */
     modules_pack->clear();
+    modules_pack = NULL;
     controls_pack->clear();
+    modules_pack = NULL;
 
-    client()->unlock();
+    if ( client() )
+	client()->unlock();
 }
 
 Group *
@@ -322,10 +327,17 @@ Chain::remove ( Controller_Module *m )
 }
 
 void
-Chain::send_feedback ( void )
+Chain::send_feedback ( bool force )
 {
     for ( int i = 0; i < modules(); i++ )
-        module(i)->send_feedback();
+        module(i)->send_feedback( force );
+}
+
+void
+Chain::schedule_feedback ( void )
+{
+    for ( int i = 0; i < modules(); i++ )
+        module(i)->schedule_feedback();
 }
 
 /* remove a module from the chain. this isn't guaranteed to succeed,
@@ -365,7 +377,7 @@ Chain::configure_ports ( void )
     client()->lock();
 
     for ( int i = 0; i < modules(); ++i )
-    {
+    {	
         module( i )->configure_inputs( nouts );
         nouts = module( i )->noutputs();
     }
@@ -445,8 +457,8 @@ Chain::get_module_instance_number ( Module *m )
 {
     int n = 0;
 
-    for ( int i = 0; i < modules() && module(i) != m; ++i )
-        if ( ! strcmp( module(i)->label(), m->label() ) )
+    for ( int i = 0; i < modules(); ++i )
+        if ( ! strcmp( module(i)->base_label(), m->base_label() ) )
             n++;
 
     return n;
@@ -534,6 +546,8 @@ Chain::name ( const char *name )
     if ( strip()->group() )
     {
         if ( strip()->group()->single() )
+	    /* we are the owner of this group and its only member, so
+	     * rename it */
             strip()->group()->name(name);
     }
     
@@ -566,6 +580,13 @@ Chain::insert ( Module *m, Module *n )
 {
     client()->lock();
 
+    Module::sample_rate( client()->sample_rate() );
+    n->resize_buffers( client()->nframes() );
+
+    /* inserting a new instance */
+    if ( -1 == n->number() ) 
+	n->number( get_module_instance_number( n ) );
+    
     if ( !m )
     {
         if ( modules() == 0 && n->can_support_inputs( 0 ) >= 0 )
@@ -713,6 +734,8 @@ Chain::add_to_process_queue ( Module *m )
 void
 Chain::build_process_queue ( void )
 {
+    client()->lock();
+    
     process_queue.clear();
 
     for ( int i = 0; i < modules(); ++i )
@@ -780,6 +803,8 @@ Chain::build_process_queue ( void )
 /*             delete[] s; */
 /*         } */
 /*     } */
+
+    client()->unlock();
 }
 
 void
@@ -901,9 +926,9 @@ Chain::process ( nframes_t nframes )
 {
     for ( std::list<Module*>::const_iterator i = process_queue.begin(); i != process_queue.end(); ++i )
     {
-        Module *m = *i;
-
-        m->process( nframes );
+	Module *m = *i;
+	    
+	m->process( nframes );
     }
 }
 
@@ -927,7 +952,7 @@ Chain::buffer_size ( nframes_t nframes )
 int
 Chain::sample_rate_change ( nframes_t nframes )
 {
-    Module::set_sample_rate ( nframes );
+    Module::sample_rate ( nframes );
     for ( int i = 0; i < modules(); ++i )
     {
         Module *m = module(i);

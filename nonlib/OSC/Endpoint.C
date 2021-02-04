@@ -23,12 +23,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h>
+#include <math.h>
 
 #include "Endpoint.H"
 
 #include "Thread.H"
 
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+
+static int SCAN_BATCH_SIZE = 100;
 
 namespace OSC
 {
@@ -187,6 +191,7 @@ namespace OSC
     Endpoint::Endpoint ( )
     {  
         _learning_path = NULL;
+	_learning_callback = NULL;
         _peer_signal_notification_callback = 0;
         _peer_signal_notification_userdata = 0;
         _peer_scan_complete_callback = 0;
@@ -685,8 +690,13 @@ namespace OSC
             DMESSAGE( "Learned translation \"%s\" -> \"%s\"", path, ep->_learning_path );
             
             free(ep->_learning_path);
+
+	    ep->_learning_callback(ep->_learning_userdata);
+
+	    ep->_learning_userdata = NULL;
+	    ep->_learning_callback = NULL;
             ep->_learning_path = NULL;
-            
+
             return 0;
         }
 
@@ -705,7 +715,9 @@ namespace OSC
                     i->second.current_value = argv[0]->f;
                 }
 
-                i->second.suppress_feedback = true;
+		/* FIXME: this was intended to break feedback cycles, but it actually
+		 results in some feedback values not being sent at all */
+                /* i->second.suppress_feedback = true; */
 
                 lo_send_message(ep->_addr, dpath, msg );
                 return 0;
@@ -738,34 +750,122 @@ namespace OSC
     {
 //        OSC_DMSG();
         
-        DMESSAGE( "Listing signals." );
 
         const char *prefix = NULL;
+	int skip = 0;
+	bool batch_mode = true;
+	int start;
 
-        if ( argc )
+	const int count = SCAN_BATCH_SIZE;
+	
+        if ( 's' == types[0] )
+	{
             prefix = &argv[0]->s;
+	    DMESSAGE( "Listing signals for prefix \"%s\"", prefix );
+	    skip++;
+	    batch_mode = 2 == argc;
+	}
+	else
+	{
+	    DMESSAGE( "Listing all signals." );
+	}
+
+	if ( 0 == argc || 's' == types[0] )
+	{
+	    /* obsolete unbatched mode left for backwards compatibility... */
+	    WARNING("Peer asked for unbatched signal list... will incur delays!");
+	    batch_mode = false;
+	}
+	else
+	{
+	    /* we have to list these in batches, otherwise they the UDP packets overrun and get dropped... Probably
+	       wouldn't be an issue with TCP transport. */
+	    batch_mode = true;
+	    start = argv[0+skip]->i;
+	    /* count = argv[1+skip]->i; */
+	}	
 
         Endpoint *ep = (Endpoint*)user_data;
 
+	
+	int sent = 0;
+
+	int s = 0;
+	bool more = false;
+
+	lo_bundle b;
+	if ( batch_mode )
+	{
+	    b = lo_bundle_new(LO_TT_IMMEDIATE);
+	}
+	
         for ( std::list<Signal*>::const_iterator i = ep->_signals.begin(); i != ep->_signals.end(); ++i )
         {
             Signal *o = *i;
 
             if ( ! prefix || ! strncmp( o->path(), prefix, strlen(prefix) ) )
             {
-                ep->send( lo_message_get_source( msg ),
-                          "/reply", 
-                          path,
-                          o->path(),
-                          o->_direction == Signal::Input ? "in" : "out",
-                          o->parameter_limits().min,
-                          o->parameter_limits().max,
-                          o->parameter_limits().default_value
+		if ( s++ < start )
+		    continue;
+		
+		/* DMESSAGE( "Listing signal %s", o->path() ); */
+
+		if ( batch_mode )
+		{
+		    lo_message m = lo_message_new();
+
+		    lo_message_add_string( m, path );
+		    lo_message_add_string( m, o->path() );
+		    lo_message_add_string( m, o->_direction == Signal::Input ? "in" : "out" );
+		    lo_message_add_float( m, o->parameter_limits().min );
+		    lo_message_add_float( m, o->parameter_limits().max );
+		    lo_message_add_float( m, o->parameter_limits().default_value );
+
+		    lo_bundle_add_message( b, "/reply", m );                
+		}
+		else    
+		{
+		    ep->send( lo_message_get_source( msg ),
+			      "/reply", 
+			      path,
+			      o->path(),
+			      o->_direction == Signal::Input ? "in" : "out",
+			      o->parameter_limits().min,
+			      o->parameter_limits().max,
+			      o->parameter_limits().default_value
                     );
+		}
+
+		if ( batch_mode )
+		{
+		    if ( ++sent == count )
+		    {
+			more = true;
+			break;
+		    }
+		}
+		else
+		{
+		    usleep(1000);
+		}
             }
         }
-        
-        ep->send( lo_message_get_source( msg ), "/reply", path );
+
+	if ( batch_mode )
+	{
+	    lo_message m = lo_message_new();
+	    
+	    lo_message_add_string(m, path);
+	    lo_message_add_int32( m, sent );
+	    lo_message_add_int32( m, more );
+	    
+	    lo_bundle_add_message( b, "/reply", m );                
+
+	    lo_send_bundle_from( lo_message_get_source( msg ), ep->_server, b );
+	    /* ep->send( lo_message_get_source( msg ), "/reply", path, sent, more ); */
+	}
+	else	   
+	    ep->send( lo_message_get_source( msg ), "/reply", path );
 
         return 0;
     }
@@ -900,13 +1000,38 @@ namespace OSC
                 return 0;
             }
 
-            if ( argc == 1 )
+	    if ( argc == 1 )
+	    {
+		/* old handler for backwards compatibility */
+		p->_scanning = false;
+		DMESSAGE( "Done scanning %s", p->name );
+		
+		if ( ep->_peer_scan_complete_callback )
+		    ep->_peer_scan_complete_callback(ep->_peer_scan_complete_userdata);
+	    }
+	    else
+            if ( argc == 3 )
             {
-                p->_scanning = false;
-                DMESSAGE( "Done scanning %s", p->name );
+		const int sent = argv[1]->i;		
+		const int more = argv[2]->i;
+		
+		if ( !more )
+		{
+		    p->_scanning = false;
+		    DMESSAGE( "Done scanning %s", p->name );
+		    
+		    if ( ep->_peer_scan_complete_callback )
+			ep->_peer_scan_complete_callback(ep->_peer_scan_complete_userdata);
+		}
+		else
+		{
+		    DMESSAGE( "Scanning next batch %s", p->name );
 
-                if ( ep->_peer_scan_complete_callback )
-                    ep->_peer_scan_complete_callback(ep->_peer_scan_complete_userdata);
+		    p->_scanning_current += sent;
+		    
+		    ep->send( p->addr, "/signal/list", p->_scanning_current );
+		}
+		    
             }
             else if ( argc == 6 && p->_scanning )
             {
@@ -915,7 +1040,7 @@ namespace OSC
                 if ( s )
                     return 0;
 
-                DMESSAGE( "Peer %s has signal %s (%s)", p->name, &argv[1]->s, &argv[2]->s );
+                /* DMESSAGE( "Peer %s has signal %s (%s)", p->name, &argv[1]->s, &argv[2]->s ); */
 
                 int dir = 0;
 
@@ -1066,12 +1191,15 @@ namespace OSC
 
     /* prepare to learn a translation for /path/. The next unhandled message to come through will be mapped to /path/ */
     void
-    Endpoint::learn ( const char *path )
+    Endpoint::learn ( const char *path, void (*callback)(void*), void *userdata )
     {
         if ( _learning_path )
             free( _learning_path );
 
         _learning_path = NULL;
+
+	_learning_callback = callback;
+	_learning_userdata = userdata;
 
         if ( path )
             _learning_path = strdup( path );
@@ -1079,7 +1207,7 @@ namespace OSC
 
     /** if there's a translation with a destination of 'path', then send feedback for it */
     void
-    Endpoint::send_feedback ( const char *path, float v )
+    Endpoint::send_feedback ( const char *path, float v, bool force )
     {
         for ( std::map<std::string,TranslationDestination>::iterator i = _translations.begin();
               i != _translations.end();
@@ -1088,7 +1216,7 @@ namespace OSC
             if ( path && ! strcmp( i->second.path.c_str(), path ) )
             {
                 /* found it */
-                if ( !i->second.suppress_feedback && i->second.current_value != v )
+                if ( !i->second.suppress_feedback && ( force || fabsf(i->second.current_value - v ) > 0.001f ))
                 {
                     const char *spath = i->first.c_str();
 
@@ -1134,10 +1262,11 @@ namespace OSC
         Peer *p = add_peer(name,url);
 
         p->_scanning = true;
-
+	p->_scanning_current = 0;
+	
         DMESSAGE( "Scanning peer %s", name );
 
-        send( p->addr, "/signal/list" );
+        send( p->addr, "/signal/list", p->_scanning_current );
     }
 
     void *

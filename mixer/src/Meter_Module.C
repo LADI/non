@@ -22,6 +22,7 @@
 #include <math.h>
 #include <FL/Fl.H>
 #include <FL/Fl_Single_Window.H>
+#include <FL/fl_draw.H>
 
 #include "FL/Fl_Scalepack.H"
 #include "FL/test_press.H"
@@ -30,30 +31,33 @@
 #include "DPM.H"
 #include "JACK/Port.H"
 #include "dsp.h"
-
 
 
 Meter_Module::Meter_Module ( )
     : Module ( 50, 100, name() )
 {
-    box( FL_NO_BOX );
-    dpm_pack = new Fl_Scalepack( x(), y(), w(), h() );
+    box( FL_FLAT_BOX );
+    dpm_pack = new Fl_Scalepack( x() + 2, y() + 2, w() - 4, h() - 4 );
     dpm_pack->type( FL_HORIZONTAL );
-
+    dpm_pack->spacing( 1 );
+    
     control_value = 0;
-
-    color( FL_BLACK );
+    peaks = 0;
+    meter_sample_period_count = 0;
+    meter_sample_periods = 0;
+    
+    color( fl_darker( fl_darker( FL_BACKGROUND_COLOR )));
 
     end();
 
-    Port p( this, Port::OUTPUT, Port::CONTROL, "dB level" );
-    p.hints.type = Port::Hints::LOGARITHMIC;
+    Port p( this, Port::OUTPUT, Port::CONTROL, "peak level" );
+    p.hints.type = Port::Hints::LINEAR;
     p.hints.ranged = true;
-    p.hints.maximum = 6.0f;
-    p.hints.minimum = -70.0f;
+    p.hints.maximum = 10.0f;
+    p.hints.minimum = 0.0f;
     p.hints.dimensions = 1;
     p.connect_to( new float[1] );
-    p.control_value_no_callback( -70.0f );
+    p.control_value_no_callback( 0 );
 
     add_port( p );
 
@@ -70,13 +74,40 @@ Meter_Module::~Meter_Module ( )
 
 
 
+
+
+void Meter_Module::resize ( int X, int Y, int W, int H )
+{
+    Fl_Group::resize(X,Y,W,H);
+    dpm_pack->resize( x() + 2, y() + 2, w() - 4, h() - 4 );
+}
+
+void
+Meter_Module::draw ( void )
+{
+    /* draw_box(x(),y(),w(),h()); */
+
+    Fl_Group::draw();
+    
+    fl_rect( x(), y(), w(), h(), fl_darker(FL_BACKGROUND_COLOR));
+    fl_rect( x()+1, y()+1, w()-2, h()-2, fl_darker(fl_darker(FL_BACKGROUND_COLOR)));
+}
+
 void
 Meter_Module::update ( void )
 {
     for ( int i = dpm_pack->children(); i--; )
     {
-        ((DPM*)dpm_pack->child( i ))->value( control_value[i] );
-        control_value[i] = -70.0f;
+	DPM* o = ((DPM*)dpm_pack->child( i ));
+
+	const float v = CO_DB( control_value[i] );
+	
+	if ( v > o->value() )
+	    o->value( v );
+
+	o->update();
+	
+        control_value[i] = 0;
     }
 }
 
@@ -99,7 +130,6 @@ Meter_Module::configure_inputs ( int n )
 
             add_port( Port( this, Port::INPUT, Port::AUDIO ) );
             add_port( Port( this, Port::OUTPUT, Port::AUDIO ) );
-
         }
     }
     else
@@ -114,8 +144,12 @@ Meter_Module::configure_inputs ( int n )
             audio_input.pop_back();
             audio_output.back().disconnect();
             audio_output.pop_back();
+
+	    smoothing.pop_back();
         }
     }
+
+    	    /* DMESSAGE( "sample rate: %lu, nframes: %lu", sample_rate(), this->nframes() ); */
 
     control_output[0].hints.dimensions = n;
     delete[] (float*)control_output[0].buffer();
@@ -123,7 +157,7 @@ Meter_Module::configure_inputs ( int n )
         float *f = new float[n];
 
         for ( int i = n; i--; )
-            f[i] = -70.0f;
+            f[i] = 0;
 
         control_output[0].connect_to( f );
     }
@@ -133,7 +167,7 @@ Meter_Module::configure_inputs ( int n )
 
     control_value = new float[n];
     for ( int i = n; i--; )
-        control_value[i] = -70.0f;
+        control_value[i] = 0;
 
     if ( control_output[0].connected() )
         control_output[0].connected_port()->module()->handle_control_changed( control_output[0].connected_port() );
@@ -175,11 +209,19 @@ Meter_Module::process ( nframes_t nframes )
 {
     for ( unsigned int i = 0; i < audio_input.size(); ++i )
     {
-//            float dB = 20 * log10( get_peak_sample( (float*)audio_input[i].buffer(), nframes ) / 2.0f );
-        float dB = 20 * log10( buffer_get_peak( (sample_t*) audio_input[i].buffer(), nframes ) );
+	const float peak = buffer_get_peak( (sample_t*) audio_input[i].buffer(), nframes );
+	
+	/* const float RMS = sqrtf( peak / (float)nframes); */
 
-        ((float*)control_output[0].buffer())[i] = dB;
-        if (dB > control_value[i])
-            control_value[i] = dB;
+	/* since the GUI only updates at 20 or 30hz, there's no point in doing this more often than necessary. */
+
+	/* need to store this separately from other peaks as it must be reset each time we do a round of smoothing output */
+		
+	/* store peak value */
+	if ( peak > ((float*)control_output[0].buffer())[i] )
+	    ((float*)control_output[0].buffer())[i] = peak;
+
+	if ( peak > control_value[i] )
+	    control_value[i] = peak;
     }
 }

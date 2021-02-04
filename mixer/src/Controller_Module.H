@@ -47,9 +47,13 @@ class Controller_Module : public Module
     void add_osc_peers_to_menu ( Fl_Menu_Button *m, const char *prefix );
     void add_osc_connections_to_menu ( Fl_Menu_Button *m, const char *prefix );
 
+    static void learning_callback ( void *userdata );
+    void learning_callback ( void );
+    
 public:
 
     static bool _learn_mode;
+    static Controller_Module *_learning_control;
 
     static bool learn_by_number;
     static bool learn_mode ( void ) { return _learn_mode; }
@@ -115,6 +119,7 @@ protected:
 
 private:
 
+    void apply_label ( Port *p, Fl_Widget *o );
     void maybe_create_panner ( void );
     char *generate_osc_path ( void );
     void change_osc_path ( char *path );

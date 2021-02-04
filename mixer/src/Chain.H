@@ -100,8 +100,9 @@ public:
     const char *name ( void ) const { return _name; }
     void name ( const char *name );
 
-    void send_feedback ( void );
-
+    void send_feedback ( bool force );
+    void schedule_feedback ( void );
+    
     int get_module_instance_number ( Module *m );
 
     void configure_ports ( void );
@@ -109,7 +110,7 @@ public:
 
     bool can_support_input_channels ( int n );
 
-    int modules ( void ) const { return modules_pack->children(); }
+    int modules ( void ) const { return modules_pack ? modules_pack->children() : 0; }
     Module *module ( int n ) const { return (Module*)modules_pack->child( n ); }
     void remove ( Controller_Module *m );
     void remove ( Module *m );

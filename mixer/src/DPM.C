@@ -43,33 +43,44 @@ DPM::DPM ( int X, int Y, int W, int H, const char *L ) :
 
     _last_drawn_hi_segment = 0;
 
-    pixels_per_segment( 4 );
+    pixels_per_segment( 5 );
 
     type( FL_VERTICAL );
 
 //    resize( X, Y, W, H );
 
-    dim( 0.85f );
+    dim( 0.95f );
+
+    box( FL_FLAT_BOX );
+
+    color(FL_BLACK);
+    
+    /* color( fl_color_average( FL_BLACK,  FL_BACKGROUND_COLOR, 0.25f ) ); */
 
     /* initialize gradients */
     if ( DPM::_gradient[ 0 ] == 0 )
     {
-        int breaks[] = {0,60,70,80,90,127};
+	int breaks[] = {0,80,90,110,127};
 
-        Fl_Color cols[] = { 
-            fl_rgb_color( 45,58,64),
-            fl_rgb_color( 84,181,195 ), 
-            fl_rgb_color( 122,200,211 ), 
-            fl_rgb_color( 178,213,212 ), 
-            fl_rgb_color( 209,213,179 ),
-            fl_rgb_color( 250, 40, 30 )
+	Fl_Color cols[] = { 
+            fl_darker( FL_CYAN ),
+            FL_CYAN,
+	    fl_lighter( FL_CYAN ),
+            fl_color_average( FL_YELLOW, FL_RED, 0.50f ),
+            FL_RED
         };
 
-        DPM::blend( 6, breaks, cols );
-    }
+	for ( int i = 0; i < 4; ++i )
+	{
+	    cols[i] = fl_color_average( cols[i], FL_BACKGROUND_COLOR, 0.60f );
+	}
 
-    box( FL_FLAT_BOX );
-    color( FL_BACKGROUND_COLOR );
+        DPM::blend( 5,
+		    breaks,
+		    cols,
+		    color() );
+
+    }
 
     resize( X,Y,W,H);
 }
@@ -78,40 +89,40 @@ DPM::DPM ( int X, int Y, int W, int H, const char *L ) :
 const int marks [] = { -70, -50, -40, -30, -20, -10, -3, 0, 4 };
 
 void
-DPM::draw_label ( void )
+DPM::public_draw_label ( int X, int Y, int W, int H )
 {
-
-    /* dirty hack */
-    if ( parent()->child( 0 ) == this )
+    fl_push_clip(X,Y,W,H);
+    fl_rectf( X,Y,W,H, FL_BACKGROUND_COLOR);
+	
+    fl_font( FL_TIMES, 8 );
+    fl_color( active_r() ? FL_FOREGROUND_COLOR : fl_inactive( FL_FOREGROUND_COLOR ) );
+    /* draw marks */
+    char pat[5];
+    if ( type() == FL_HORIZONTAL )
     {
-        fl_font( FL_TIMES, 8 );
-        fl_color( FL_WHITE );
-        /* draw marks */
-        char pat[5];
-        if ( type() == FL_HORIZONTAL )
-        {
-            for ( int i = sizeof( marks ) / sizeof( marks[0] ); i-- ; )
-            {
-                sprintf( pat, "%d", marks[ i ] );
+	for ( int i = sizeof( marks ) / sizeof( marks[0] ); i-- ; )
+	{
+	    sprintf( pat, "%d", marks[ i ] );
 
-                int v = w() *  deflection( (float)marks[ i ] );
+	    int v = w() *  deflection( (float)marks[ i ] );
 
-                fl_draw( pat, x() + v, (y() + h() + 8), 19, 8, (Fl_Align) (FL_ALIGN_RIGHT | FL_ALIGN_TOP) );
-            }
+	    fl_draw( pat, X + v, (Y + H + 8), W, 8, (Fl_Align) (FL_ALIGN_RIGHT | FL_ALIGN_TOP) );
+	}
 
-        }
-        else
-        {
-            for ( int i = sizeof( marks ) / sizeof( marks[0] ); i-- ; )
-            {
-                sprintf( pat, "%d", marks[ i ] );
-
-                int v = h() *  deflection( (float)marks[ i ] );
-
-                fl_draw( pat, x() - 20, (y() + h() - 4) - v, 19, 8, (Fl_Align) (FL_ALIGN_RIGHT | FL_ALIGN_TOP) );
-            }
-        }
     }
+    else
+    {
+	for ( int i = sizeof( marks ) / sizeof( marks[0] ); i-- ; )
+	{
+	    sprintf( pat, "%d", marks[ i ] );
+
+	    int v = h() *  deflection( (float)marks[ i ] );
+
+	    fl_draw( pat, X, (Y + H - 4) - v, W, 8, (Fl_Align) (FL_ALIGN_RIGHT | FL_ALIGN_TOP) );
+	}
+    }
+
+    fl_pop_clip();
 }
 
 void
@@ -135,11 +146,16 @@ DPM::resize ( int X, int Y, int W, int H )
 
 void DPM::bbox ( int &X, int &Y, int &W, int &H )
 {
-    X = x() + 2;
-    Y = y() + 2;
-    W = w() - 4;
-    H = h() - 4;
+    /* X = x() + 2; */
+    /* Y = y() + 2; */
+    /* W = w() - 4; */
+    /* H = h() - 4; */
+    X = x();
+    Y = y();
+    W = w();
+    H = h();
 }
+
 
 void
 DPM::draw ( void )
@@ -149,7 +165,7 @@ DPM::draw ( void )
 
     int X,Y,W,H;
     bbox(X,Y,W,H);
-
+    
     int v = pos( value() );
     int pv = pos( peak() );
     
@@ -159,15 +175,17 @@ DPM::draw ( void )
     /*  int bh = _pixels_per_segment; */
     /* int bw = _pixels_per_segment; */
     int bw = W / _segments;
+    
+    if ( 0 == fl_not_clipped(X,Y,W,H ) )
+	return;
 
     if ( damage() & FL_DAMAGE_ALL )
     {
-        draw_label();
+        /* draw_label(); */
 
-        draw_box( FL_FLAT_BOX, x(), y(), w(), h(), FL_DARK1 );
+        draw_box( box(), X, Y, W, H, color() );
     }
-
-    fl_push_clip( X, Y, W, H );
+    
 
     const int active = active_r();
 
@@ -176,12 +194,16 @@ DPM::draw ( void )
     /* only draw as many segments as necessary */
     if ( damage() == FL_DAMAGE_USER1 )
     {
-        if ( v > _last_drawn_hi_segment )
+	if ( v == _last_drawn_hi_segment )
+	{
+	    return;
+	}
+	else if ( v > _last_drawn_hi_segment )
         {
             hi = v;
             lo = _last_drawn_hi_segment;
         }
-        else
+        else if ( v < _last_drawn_hi_segment )
         {
             hi = _last_drawn_hi_segment;
             lo = v;
@@ -195,62 +217,50 @@ DPM::draw ( void )
 
     _last_drawn_hi_segment = v;
 
-    for ( int p = lo; p <= hi; p++ )
+    fl_push_clip( X, Y, W, H );
+
+    for ( int p = lo; p <= hi + 1; ++p )
     {
-        Fl_Color c;
-
-        if ( p <= v )
-        {
-            if (  p == clipv )
-                c = fl_color_average( FL_YELLOW, div_color( p ), 0.40 );
-            else
-                c = div_color( p );
-        }
-        else if ( p == pv )
-            c = div_color( p );
-        else
-            c = dim_div_color( p );
-        
-        if ( ! active )
-            c = fl_inactive( c );
-
-        int yy = 0;
-        int xx = 0;
-             
-        if ( type() == FL_HORIZONTAL )
-        {
-            xx = X + p * bw;
-            fl_rectf( X + (p * bw), Y, bw, H, c );
-        }
-        else
-        {
-            yy = Y + H - ((p+1) * bh);
-            fl_rectf( X, yy, W, bh, c );
-        }
-        
-        if ( _pixels_per_segment >= 3 )
-        {
-            fl_color( FL_DARK1 );
-
-            if ( type() == FL_HORIZONTAL )
-            {
-                fl_line( xx, Y, xx, Y + H - 1 );
-            }
-            else
-            {
-                fl_line( X, yy, X + W - 1, yy );
-            }
-        }
-
-        /* } */
-        /* else */
-        /* { */
-        /*     if ( type() == FL_HORIZONTAL ) */
-        /*         fl_draw_box( box(), X + (p * bw), Y, bw, H, c ); */
-        /*     else */
-        /*         fl_draw_box( box(), X, Y + H - ((p + 1) * bh), W, bh, c ); */
-        /* } */
+	Fl_Color c;
+	
+	if ( p <= v || p == pv )
+	{
+	    if ( p == clipv )
+		c = fl_color_average( FL_YELLOW, div_color( p ), 0.40 );
+	    else
+		c = div_color( p );
+	}
+	else
+	    c = fl_darker( FL_BACKGROUND_COLOR );//FL_DARK1; // fl_color_average( FL_BACKGROUND_COLOR, FL_BLACK, 0.50f );// FL_BACKGROUND_COLOR; //dim_div_color( p );
+	
+	if ( ! active )
+	    c = fl_inactive( c );
+	
+	int yy = 0;
+	int xx = 0;
+	
+	if ( type() == FL_HORIZONTAL )
+	{
+	    xx = X + p * bw;
+	    fl_rectf( xx + 1, Y, bw - 1, H, c );
+	}
+	else
+	{
+	    yy = Y + H - ((p+1) * bh);
+	    fl_rectf( X, yy + 1, W, bh - 1, c );
+	}
     }
 
     fl_pop_clip();
+}
+
+void
+DPM::update ( void )
+{
+    /* do falloff */
+    float f = value() - 0.33f;
+    if ( f < -80.0f )
+	f = -80.0f;
+    
+    value(f);
 }

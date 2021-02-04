@@ -30,9 +30,7 @@ class DPM : public Meter
     int _segments;
     int _pixels_per_segment;
     int _last_drawn_hi_segment;
-
-    float _value;
-
+    
     int pos ( float v )
         {
             float pv = deflection( v ) * ( _segments - 1 );
@@ -55,44 +53,43 @@ class DPM : public Meter
         {
             return _dim_gradient[ i * 127 / _segments ];
         }
-
-
+    
 protected:
 
-    virtual void draw_label ( void );
     virtual void draw ( void );
     virtual void resize ( int, int, int, int );
+    /* virtual void draw_label ( void ); */
 
     void bbox ( int &X, int &Y, int &W, int &H );
 
 public:
 
+    void public_draw_label ( int X, int Y, int W, int H );
+    
     DPM ( int X, int Y, int W, int H,  const char *L = 0 );
-
-    void value ( float v )
-        {
-            if ( _value != v )
-            {
-                if ( pos( v ) != pos( _value ) ) 
-                    Meter::value( v );
-            }
-
-            _value = v;
-        }
-
-    float value ( void ) const
-        {
-            return _value;
-        }
 
     void pixels_per_segment ( int v ) { _pixels_per_segment = v; }
 
     float dim ( void ) const { return _dim; }
     void dim ( float v ) { _dim = v; if ( visible_r() ) redraw(); }
 
+    
+    virtual void value ( float v )
+        {
+	    /* only  trigger redraw for changes at or above our resolution*/
+	    if ( pos( value() ) != pos( v ) && visible_r() )
+		damage( FL_DAMAGE_USER1 );
+	    
+	    Meter::value( v );
+        }
+
+    virtual float value ( void ) { return Meter::value(); }
+
+    void update ( void );
+    
     static
     void
-    blend ( int nbreaks, int* b, Fl_Color *c )
+    blend ( int nbreaks, int* b, Fl_Color *c, Fl_Color bc )
         {
             for ( int i = 0; i < nbreaks - 1; i++ )
             {

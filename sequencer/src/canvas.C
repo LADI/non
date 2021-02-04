@@ -167,7 +167,8 @@ Canvas::Canvas ( int X, int Y, int W, int H, const char *L ) : Fl_Group( X,Y,W,H
             o->canvas = this;
             o->box( FL_FLAT_BOX );
 //        o->color(fl_color_average( FL_BLACK, FL_WHITE, 0.90 ));
-            o->color( FL_BLACK );
+            /* o->color( FL_BLACK ); */
+	    o->color(fl_darker(FL_BACKGROUND_COLOR));
 //        o->color(FL_BACKGROUND_COLOR);
 //        o->type( FL_HORIZONTAL );
             o->callback( cb_scroll, this );
@@ -291,7 +292,7 @@ Canvas::_update_row_mapping ( void )
     else
         m.maxh = 128;
 
-    m.vp->h = min( m.vp->h, m.maxh );
+    m.vp->h = max( m.vp->h, m.maxh );
 
     resize_grid();
 }
@@ -488,10 +489,12 @@ gui_draw_string ( int x, int y, int w, int h, int color, const char *s, bool dra
     {
 //        fl_rectf( x,y,w,h, FL_BACKGROUND_COLOR );
 
-        if ( color )
-            fl_color( velocity_colors[ color ] );
-        else
-            fl_color( FL_DARK_CYAN );
+	fl_color( FL_FOREGROUND_COLOR );
+	
+        /* if ( color ) */
+        /*     fl_color( velocity_colors[ color ] ); */
+        /* else */
+        /*     fl_color( FL_DARK_CYAN ); */
 
         fl_draw( s, x, y + h / 2 + fl_descent() );
     }
@@ -519,13 +522,13 @@ Canvas::draw_row_name ( int y, const char *name, int color )
 
     if ( draw && name )
     {
-        fl_rectf( bx, by, bw, bh, index(name, '#') ? FL_GRAY : FL_BLACK );
-        fl_rect( bx, by, bw, bh, FL_BLACK );
+        fl_rectf( bx, by, bw, bh, index(name, '#') ? FL_GRAY : FL_BACKGROUND_COLOR );
+        fl_rect( bx, by, bw, bh, FL_BACKGROUND_COLOR );
     }
     
     m.margin_left = max( m.margin_left, gui_draw_string( bx + 1, by + 2,
                                                          bw - 1, bh - 4,
-                                                         color,
+							                    color,
                                                          name,
                                                          draw ) );    
 }
@@ -617,14 +620,14 @@ Canvas::draw_dash ( tick_t x, int y, tick_t w, int color, int selected ) const
     
     if ( w > 4 )
     {
-        fl_draw_box( FL_ROUNDED_BOX, x, y + 1, w, m.div_h - 1, color );
+        fl_draw_box( FL_UP_BOX, x, y + 1, w, m.div_h - 1, color );
         
         if ( selected )
         {
             cairo_set_operator( Fl::cairo_cc(),CAIRO_OPERATOR_HSL_COLOR );
 
-            fl_draw_box( FL_ROUNDED_BOX, x, y + 1, w, m.div_h - 1, FL_MAGENTA );
-
+	    fl_rectf( x, y + 1, w, m.div_h - 1, FL_MAGENTA );
+	
             cairo_set_operator( Fl::cairo_cc(),CAIRO_OPERATOR_OVER);
         }      
   /* if ( selected ) */
@@ -767,7 +770,7 @@ Canvas::draw_clip ( int X, int Y, int W, int H )
                   w() - m.margin_left,
                   h() - m.margin_top - panzoomer->h() );
 
-    fl_rectf( m.origin_x + m.margin_left, m.origin_y + m.margin_top, w(), h(), FL_BLACK );
+    fl_rectf( m.origin_x + m.margin_left, m.origin_y + m.margin_top, w(), h(), this->color() );
 
     /* draw bar/beat lines */
 
@@ -800,7 +803,7 @@ Canvas::draw_clip ( int X, int Y, int W, int H )
                    ghost_note->velocity,
                    1 );
 
-    fl_color( fl_color_add_alpha( fl_rgb_color( 127,127,127 ), 50 ));
+    fl_color( fl_color_add_alpha( fl_rgb_color( 127,127,127 ), 25 ));
 
     /* draw grid */
     
@@ -1585,12 +1588,12 @@ Canvas::handle ( int m )
 
                             ghost_note->start = this->m.grid->x_to_ts( dx );
                             ghost_note->note = dy;
-                            ghost_note->duration = this->m.grid->default_length();
+                            ghost_note->duration = this->m.grid->default_length() - 1;
                             ghost_note->velocity = 64;
 
                             drag_note->start = this->m.grid->x_to_ts( dx );
                             drag_note->note = dy;
-                            drag_note->duration = this->m.grid->default_length();
+                            drag_note->duration = this->m.grid->default_length() - 1;
                             drag_note->velocity = 64;
                     
 

@@ -134,7 +134,7 @@ Track::init ( void )
     _name = NULL;
     _selected = false;
     _size = 1;
-
+    
     record_ds = NULL;
     playback_ds = NULL;
 
@@ -604,6 +604,10 @@ Track::remove ( Audio_Sequence *t )
     if ( ! takes )
         return;
 
+    Loggable::block_start();
+    
+    Logger log(this);
+ 
     if ( sequence() == t )
     {
         pack->remove( t );
@@ -617,8 +621,11 @@ Track::remove ( Audio_Sequence *t )
     else
         takes->remove( t );
 
-/*     delete t; */
+    /* doing this here creates a cycle */
+    /* delete t; */
 
+    Loggable::block_end();
+    
     adjust_size();
 }
 
@@ -647,9 +654,12 @@ Track::remove ( Control_Sequence *t )
 void
 Track::sequence ( Audio_Sequence * t )
 {
+    Logger log(this);
+    
     if ( sequence() == t )
     {
-        DMESSAGE( "Attempt to set sequence twice" );
+	/* ASSERT( false, "Attempt to set same sequence twice" ); */
+        DMESSAGE( "Attempt to set same sequence twice, %p == %p", t, sequence() );
         return;
     }
 
@@ -873,8 +883,13 @@ Track::menu_cb ( const Fl_Menu_ *m )
     else if ( !strcmp( picked, "Takes/New" ) )
     {
         timeline->track_lock.wrlock();
+	
+	Loggable::block_start();
+
         sequence( (Audio_Sequence*)sequence()->clone_empty() );
         timeline->track_lock.unlock();
+
+	Loggable::block_end();
     }
     else if ( !strcmp( picked, "Takes/Remove" ) )
     {
@@ -909,7 +924,7 @@ Track::menu_cb ( const Fl_Menu_ *m )
     else if ( !strncmp( picked, "Takes/", sizeof( "Takes/" ) - 1 ) )
     {
         Audio_Sequence* s = (Audio_Sequence*)m->mvalue()->user_data();
-
+	
         timeline->track_lock.wrlock();
         sequence( s );
         timeline->track_lock.unlock();
@@ -1044,7 +1059,10 @@ Track::draw ( void )
 int
 Track::handle ( int m )
 {
-
+    if ( !active_r() )
+	/* don't mess with anything while recording... */
+	return 0;
+    
 /*     if ( m != FL_NO_EVENT ) */
 /*         DMESSAGE( "%s", event_name( m ) ); */
     static Fl_Widget *dragging = NULL;
@@ -1056,7 +1074,8 @@ Track::handle ( int m )
         case FL_DND_DRAG:
         case FL_DND_RELEASE:
         case FL_PASTE:
-            if ( Fl::event_x() > Track::width() )
+	    if ( dragging != ((Track_Header*)child(0))->output_connector_handle &&
+		 Fl::event_x() > Track::width()  )
                 return sequence()->handle(m);
         default:
             break;
@@ -1097,6 +1116,7 @@ Track::handle ( int m )
             if ( Fl::event_button1() && Fl::event_inside( ((Track_Header*)child(0))->color_box ) )
             {
                 dragging = this;
+		fl_cursor( FL_CURSOR_MOVE );
                 return 1;
             }
             if ( Fl::event_button1() && Fl::event_inside( ((Track_Header*)child(0))->output_connector_handle ) )
@@ -1119,32 +1139,50 @@ Track::handle ( int m )
         case FL_ENTER:
         case FL_LEAVE:
         case FL_MOVE:
-            if ( Fl::event_x() >= Track::width() )
+
+	    if ( dragging != ((Track_Header*)child(0))->output_connector_handle &&
+		 Fl::event_x() >= Track::width() )
             {
                 return Fl_Group::handle(m);
             }
+	    else
+	    {
+		if ( Fl::event_inside( ((Track_Header*)child(0))->output_connector_handle ) ||
+		     Fl::event_inside( ((Track_Header*)child(0))->input_connector_handle ) ||
+		     Fl::event_inside( ((Track_Header*)child(0))->color_box ) )
+		    fl_cursor( FL_CURSOR_HAND );
+	    }
             return 1;
         case FL_DND_ENTER:
             return 1;
         case FL_DND_LEAVE:
     
-            if ( ! Fl::event_inside(this) && this == receptive_to_drop )
-            {
+            /* if ( ! Fl::event_inside(this) )// && this == receptive_to_drop ) */
+            /* { */
                 receptive_to_drop = 0;
                 redraw();
                 Fl::selection_owner(0);
-            }
+            /* } */
             return 1;
         case FL_RELEASE:
             if ( dragging == this )
             {
                 dragging = NULL;
                 timeline->insert_track( this, timeline->event_inside() );
-                return 1;
+		fl_cursor( FL_CURSOR_DEFAULT );
+	        return 1;
             }
+	    else if ( dragging == ((Track_Header*)child(0))->output_connector_handle )
+	    {
+		dragging = NULL;
+		fl_cursor( FL_CURSOR_DEFAULT );
+		return 1;
+	    }
+	    
             return Fl_Group::handle( m );
             break;
         case FL_DND_RELEASE:
+	    dragging = NULL;
             receptive_to_drop = 0;
             redraw();
             Fl::selection_owner(0);
@@ -1228,6 +1266,9 @@ Track::handle ( int m )
         }
         case FL_DRAG:
         {
+	    if ( Fl::event_is_click() )
+		return 1;
+	    
             if ( this != Fl::selection_owner() &&
                  Fl::event_inside( ((Track_Header*)child(0))->output_connector_handle ) )
             {
@@ -1237,8 +1278,9 @@ Track::handle ( int m )
                 for ( unsigned int i = 0; i < output.size(); ++i )
                 {
                     char *s2;
-                    asprintf(&s2, "jack.port://%s:%s\r\n", instance_name, output[i].name() );
-                    
+                    asprintf(&s2, "jack.port://%s\r\n",
+			     output[i].jack_name() );
+		    
                     s = (char*)realloc( s, strlen( s ) + strlen( s2 ) + 1 ); 
                     strcat( s, s2 );
 
@@ -1250,14 +1292,12 @@ Track::handle ( int m )
 
                 free( s );
 
+		dragging = ((Track_Header*)child(0))->output_connector_handle;
+
                 Fl::dnd();
-        
-                return 1;
-            }
-            else
-            {
-                return 1;
-            }
+	    }
+            
+	    return 1;
         }
         default:
             return Fl_Group::handle( m );
