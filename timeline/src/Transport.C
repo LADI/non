@@ -21,6 +21,7 @@
 
 #include "Transport.H"
 #include "Timeline.H"
+#include <iostream>
 
 #include "Engine/Engine.H"
 
@@ -262,8 +263,11 @@ Transport::poll ( void )
 
     ts = engine->transport_query( this );
 
+	printJackTransportPos( this );
+
     rolling = ts == JackTransportRolling;
 }
+
 
 void
 Transport::locate ( nframes_t frame )
@@ -336,4 +340,22 @@ Transport::toggle ( void )
         stop();
     else
         start();
+}
+
+void Transport::printJackTransportPos( const jack_position_t* pPos ) {
+	std::cout << "\033[36m[Non-Timeline] [JACK transport]"
+			  << " frame: " << pPos->frame
+			  << ", frame_rate: " << pPos->frame_rate
+			  << std::hex << ", valid: 0x" << pPos->valid
+			  << std::dec << ", bar: " << pPos->bar
+			  << ", beat: " << pPos->beat
+			  << ", tick: " << pPos->tick
+			  << ", bar_start_tick: " << pPos->bar_start_tick
+			  << ", beats_per_bar: " << pPos->beats_per_bar
+			  << ", beat_type: " << pPos->beat_type
+			  << ", ticks_per_beat: " << pPos->ticks_per_beat
+			  << ", beats_per_minute: " << pPos->beats_per_minute
+			  << ", frame_time: " << pPos->frame_time
+			  << ", next_time: " << pPos->next_time
+			  << "\033[0m" << std::endl;
 }

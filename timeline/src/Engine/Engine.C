@@ -101,8 +101,6 @@ Engine::playback_latency ( void ) const
 int
 Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
 {
-    static bool seeking = false;
-
     switch ( state )
     {
         case JackTransportStopped:           /* new position requested */
@@ -113,21 +111,19 @@ Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
             return 1;
         case JackTransportStarting:          /* this means JACK is polling slow-sync clients */
         {
-            if ( ! seeking )
-            {
+			// Check whether the transport position was relocated.
+            if ( transport->frame != pos->frame ) {
                 request_locate( pos->frame );
-                seeking = true;
-            }
+				} 
 
-            bool r = true;
-
-            if ( timeline )
-                r = timeline->seek_pending();
-
-            if ( ! r )
-                seeking = false;
-
-            return ! seeking;
+			// Check whether Non-timeline is still changing the
+			// transport position internally.
+            bool bPending = false;
+            if ( timeline ){
+                bPending = timeline->seek_pending();
+			}
+			
+            return !bPending;
         }
         case JackTransportRolling:           /* JACK's timeout has expired */
             /* FIXME: what's the right thing to do here? */
