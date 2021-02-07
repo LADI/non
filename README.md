@@ -30,7 +30,7 @@ attempting to build the `non-*` programs.
 
 To install NTK type:
 
-```
+```bash
 su -c './waf install'
 ```
 
@@ -38,10 +38,11 @@ su -c './waf install'
 
 Typing:
 
-```
+```bash
 ./waf configure
 ./waf
 su -c './waf install'
+```
     
 from the base of the checkout of the Non git repository will build and
 install all of the `non-*` programs together.

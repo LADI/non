@@ -263,7 +263,7 @@ Transport::poll ( void )
 
     ts = engine->transport_query( this );
 
-	printJackTransportPos( this );
+	// printJackTransportPos( this );
 
     rolling = ts == JackTransportRolling;
 }
