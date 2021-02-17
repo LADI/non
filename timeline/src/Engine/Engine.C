@@ -142,7 +142,7 @@ Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
             if ( timeline ){
                 bSeekPending = timeline->seek_pending();
 			}
-			std::cout << "[Non-timeline::Engine::sync] bPending " << bPending << std::endl;
+			std::cout << "[Non-timeline::Engine::sync] bPending " << bSeekPending << std::endl;
 			
             return ! bSeekPending;
         }
