@@ -25,6 +25,7 @@
 
 /* This is the home of the JACK process callback */
 
+#include <iostream>
 #include "const.h"
 #include "debug.h"
 #include "Thread.H"
@@ -118,20 +119,30 @@ Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
             return 1;
         case JackTransportStarting:          /* this means JACK is polling slow-sync clients */
         {
+			std::cout << "[Non-timeline::Engine::sync] JackTransportStarting" << std::endl;
+
+			std::cout << "[Non-timeline::Engine::sync] internal transport";
+			Transport::printJackTransportPos( transport );
+			
+			std::cout << "[Non-timeline::Engine::sync] JACK transport";
+			Transport::printJackTransportPos( pos );
+
 			// In addition to internal relocations, the second clause
 			// checks whether an external client did request a change
 			// in transport position at the JACK server (this can very
 			// well happen during a depending seek after responding to
 			// the internal relocation).
             if ( !bSeekPending ||  transport->frame != pos->frame ) {
+				std::cout << "[Non-timeline::Engine::sync] relocate to  " << pos->frame << std::endl;
                 request_locate( pos->frame );
-				} 
-
+			} 
+			
 			// Check whether Non-timeline is still changing the
 			// transport position internally.
             if ( timeline ){
                 bSeekPending = timeline->seek_pending();
 			}
+			std::cout << "[Non-timeline::Engine::sync] bPending " << bPending << std::endl;
 			
             return ! bSeekPending;
         }
@@ -152,6 +163,7 @@ Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
 void
 Engine::timebase ( jack_transport_state_t, jack_nframes_t, jack_position_t *pos, int )
 {
+	static int nCalls = 0;
     position_info pi = timeline->solve_tempomap( pos->frame );
 
     pos->valid = JackPositionBBT;
@@ -167,6 +179,15 @@ Engine::timebase ( jack_transport_state_t, jack_nframes_t, jack_position_t *pos,
 
     /* FIXME: fill this in */
     pos->bar_start_tick = 0;
+
+	++nCalls;
+
+	if ( nCalls >= 10 ){
+		std::cout << "[Non-timeline::Engine::timebase] valid = JackPositionBBT";
+		Transport::printJackTransportPos( pos );
+		nCalls = 0;
+	}
+
 }
 
 /* THREAD: RT */
@@ -177,6 +198,8 @@ Engine::process ( nframes_t nframes )
     _thread.set( "RT" );
 
     transport->poll();
+	std::cout << "[Non-timeline::Engine::process]";
+	Transport::printJackTransportPos( transport );
 
     if ( !timeline)
         /* handle chicken/egg problem */

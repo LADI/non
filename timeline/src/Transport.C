@@ -263,8 +263,6 @@ Transport::poll ( void )
 
     ts = engine->transport_query( this );
 
-	// printJackTransportPos( this );
-
     rolling = ts == JackTransportRolling;
 }
 
@@ -272,6 +270,7 @@ Transport::poll ( void )
 void
 Transport::locate ( nframes_t frame )
 {
+	std::cout << "[Non-timeline::Transport::locate] " << frame << std::endl;
     if ( ! engine )
         return;
 
@@ -291,6 +290,7 @@ Transport::locate ( nframes_t frame )
 void
 Transport::start ( void )
 {
+	std::cout << "[Non-timeline::Transport::start]" << std::endl;
 //    MESSAGE( "Starting transport" );
     if ( _record_button->value() )
     {
