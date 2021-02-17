@@ -101,6 +101,13 @@ Engine::playback_latency ( void ) const
 int
 Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
 {
+	// When transport is starting the JACK server will ask all clients
+	// whether they are ready yet. If not, the next cycles will be in
+	// state JackTransportStarting as well. This variable indicates
+	// that Non-Timeline did already responded to an (internal)
+	// relocation.
+	static bool bSeekPending;
+	
     switch ( state )
     {
         case JackTransportStopped:           /* new position requested */
@@ -111,19 +118,22 @@ Engine::sync ( jack_transport_state_t state, jack_position_t *pos )
             return 1;
         case JackTransportStarting:          /* this means JACK is polling slow-sync clients */
         {
-			// Check whether the transport position was relocated.
-            if ( transport->frame != pos->frame ) {
+			// In addition to internal relocations, the second clause
+			// checks whether an external client did request a change
+			// in transport position at the JACK server (this can very
+			// well happen during a depending seek after responding to
+			// the internal relocation).
+            if ( !bSeekPending ||  transport->frame != pos->frame ) {
                 request_locate( pos->frame );
 				} 
 
 			// Check whether Non-timeline is still changing the
 			// transport position internally.
-            bool bPending = false;
             if ( timeline ){
-                bPending = timeline->seek_pending();
+                bSeekPending = timeline->seek_pending();
 			}
 			
-            return !bPending;
+            return ! bSeekPending;
         }
         case JackTransportRolling:           /* JACK's timeout has expired */
             /* FIXME: what's the right thing to do here? */
